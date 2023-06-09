@@ -33,6 +33,28 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
 
         impl #builder_ident {
+            pub fn build(&mut self) -> Result<#ident, std::boxed::Box<dyn std::error::Error>> {
+                if self.executable.is_none() {
+                    return Err(std::boxed::Box::<dyn std::error::Error>::from(format!("{} not set", "executable")));
+                }
+                if self.args.is_none() {
+                    return Err(std::boxed::Box::<dyn std::error::Error>::from(format!("{} not set", "args")));
+                }
+                if self.env.is_none() {
+                    return Err(std::boxed::Box::<dyn std::error::Error>::from(format!("{} not set", "env")));
+                }
+                if self.current_dir.is_none() {
+                    return Err(std::boxed::Box::<dyn std::error::Error>::from(format!("{} not set", "current_dir")));
+                }
+                Ok(#ident{
+                    executable: self.executable.clone().unwrap(),
+                    args: self.args.clone().unwrap(),
+                    env: self.env.clone().unwrap(),
+                    current_dir: self.current_dir.clone().unwrap(),
+                })
+
+            }
+
             pub fn executable(&mut self, executable: String) {
                 self.executable = Some(executable);
             }
@@ -49,6 +71,5 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 self.current_dir = Some(current_dir);
             }
         }
-    )
-    .into()
+    ).into()
 }
