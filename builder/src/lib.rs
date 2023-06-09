@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 
-use proc_macro2::{Ident, Span};
+use proc_macro2::Ident;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput};
 
@@ -10,10 +10,10 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let ident = ast.ident;
     let builder_ident = Ident::new(
         &format!("{}Builder", ident.to_string().as_str()),
-        Span::call_site(),
+        ident.span(),
     );
-    eprintln!("ident={}", ident);
-    quote!({
+
+    quote!(
         pub struct #builder_ident {
             executable: Option<String>,
             args: Option<Vec<String>>,
@@ -22,8 +22,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
 
         impl #ident {
-            pub fn builder() -> $builderIdent {
-                #{ident}Builder {
+            pub fn builder() -> #builder_ident {
+                #builder_ident {
                     executable: None,
                     args: None,
                     env: None,
@@ -31,6 +31,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 }
             }
         }
-    })
+    )
     .into()
 }
