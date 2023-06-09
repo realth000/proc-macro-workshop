@@ -2,16 +2,32 @@ use proc_macro::TokenStream;
 
 use proc_macro2::Ident;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput};
+use syn::{parse_macro_input, Data, DeriveInput, Fields};
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
-    let ident = ast.ident;
+    let ident = &ast.ident;
     let builder_ident = Ident::new(
         &format!("{}Builder", ident.to_string().as_str()),
         ident.span(),
     );
+
+    match &ast.data {
+        Data::Enum(_) => {
+            panic!("invalid data type: {:?}", &ast.data);
+        }
+        Data::Struct(s) => {
+            if let Fields::Named(named_fields) = &s.fields {
+                eprintln!("DataStruct: {:#?}", named_fields.named);
+            }
+        }
+        Data::Union(_) => {
+            panic!("invalid data type: {:?}", &ast.data);
+        }
+    }
+
+    // eprintln!("current_dir type: {:#?}", &ast);
 
     quote!(
         impl #ident {
