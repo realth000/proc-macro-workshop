@@ -42,7 +42,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
 
             pub fn env(&mut self, env: Vec<String>) {
-                self.args = Some(env);
+                self.env = Some(env);
             }
 
             pub fn current_dir(&mut self, current_dir: String) {
