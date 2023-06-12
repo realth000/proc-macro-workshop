@@ -1,8 +1,15 @@
 use proc_macro::TokenStream;
 
 use proc_macro2::Ident;
-use quote::quote;
+use quote::{quote, ToTokens};
 use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
+
+macro_rules! field {
+    ($v: expr) => {
+        $v.iter()
+            .fold(String::new(), |r, e| format!("{}\n{}", r, e.as_str()));
+    };
+}
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
@@ -13,6 +20,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
         ident.span(),
     );
 
+    let mut field_vec: Vec<String> = vec![];
+
     match &ast.data {
         Data::Enum(_) => {
             panic!("invalid data type: {:?}", &ast.data);
@@ -21,15 +30,22 @@ pub fn derive(input: TokenStream) -> TokenStream {
             if let Fields::Named(named_fields) = &s.fields {
                 for named_field in named_fields.named.iter() {
                     if let Some(named_ident) = &named_field.ident {
-                        eprintln!("ident: {:#?}", &named_ident.to_string());
+                        // eprintln!("ident: {:#?}", &named_ident.to_string());
+                        // eprintln!("mut  : {:#?}", named_field.mutability);
+                        if let Type::Path(named_path) = &named_field.ty {
+                            // eprintln!("path : {:#?}", named_path.path.segments);
+                            // let i = &named_ident.to_string().clone();
+                            // let p = &named_path.to_token_stream().to_string();
+                            // eprintln!("i: {:#?}", i);
+                            // eprintln!("p: {:#?}", p);
+                            field_vec.push(format!(
+                                "{}:Option<{}>",
+                                &named_ident.to_string(),
+                                &named_path.to_token_stream().to_string()
+                            ))
+                        }
                     } else {
                         continue;
-                    }
-                    eprintln!("mut  : {:#?}", named_field.mutability);
-                    if let Type::Path(named_path) = &named_field.ty {
-                        eprintln!("path : {:#?}", named_path.path.segments);
-                    } else {
-                        eprintln!("ty   : {:#?}", named_field.ty);
                     }
                     // eprintln!("!!!: {:#?}", named_field);
                 }
@@ -41,15 +57,24 @@ pub fn derive(input: TokenStream) -> TokenStream {
     }
 
     // eprintln!("current_dir type: {:#?}", &ast);
+    eprintln!("field_vec: {:#?}", field_vec);
+
+    // let field_str =
+    // let field_str = field_vec
+    //     .iter()
+    //     .fold(String::new(), |r, e| format!("{}\n{}", r, e.as_str()));
+    let fs = field!(field_vec);
 
     quote!(
         impl #ident {
             pub fn builder() -> #builder_ident {
                 #builder_ident {
-                    executable: None,
-                    args: None,
-                    env: None,
-                    current_dir: None,
+                    #fs
+                    // executable: None,
+                    // args: None,
+                    // env: None,
+                    // current_dir: None,
+
                 }
             }
         }
