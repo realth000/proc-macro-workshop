@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 
 use proc_macro2::Ident;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields};
+use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
@@ -19,7 +19,20 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
         Data::Struct(s) => {
             if let Fields::Named(named_fields) = &s.fields {
-                eprintln!("DataStruct: {:#?}", named_fields.named);
+                for named_field in named_fields.named.iter() {
+                    if let Some(named_ident) = &named_field.ident {
+                        eprintln!("ident: {:#?}", &named_ident.to_string());
+                    } else {
+                        continue;
+                    }
+                    eprintln!("mut  : {:#?}", named_field.mutability);
+                    if let Type::Path(named_path) = &named_field.ty {
+                        eprintln!("path : {:#?}", named_path.path.segments);
+                    } else {
+                        eprintln!("ty   : {:#?}", named_field.ty);
+                    }
+                    // eprintln!("!!!: {:#?}", named_field);
+                }
             }
         }
         Data::Union(_) => {
