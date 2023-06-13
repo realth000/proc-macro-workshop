@@ -1,15 +1,8 @@
 use proc_macro::TokenStream;
 
 use proc_macro2::Ident;
-use quote::{quote, ToTokens};
-use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
-
-macro_rules! field {
-    ($v: expr) => {
-        $v.iter()
-            .fold(String::new(), |r, e| format!("{}\n{}", r, e.as_str()));
-    };
-}
+use quote::quote;
+use syn::{parse_macro_input, Data, DeriveInput, Fields};
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
@@ -20,70 +13,40 @@ pub fn derive(input: TokenStream) -> TokenStream {
         ident.span(),
     );
 
-    let mut field_vec: Vec<String> = vec![];
+    let mut field_vec: Vec<proc_macro2::TokenStream> = vec![];
+    let mut empty_field_vec: Vec<proc_macro2::TokenStream> = vec![];
 
     match &ast.data {
-        Data::Enum(_) => {
-            panic!("invalid data type: {:?}", &ast.data);
-        }
         Data::Struct(s) => {
             if let Fields::Named(named_fields) = &s.fields {
                 for named_field in named_fields.named.iter() {
-                    if let Some(named_ident) = &named_field.ident {
-                        // eprintln!("ident: {:#?}", &named_ident.to_string());
-                        // eprintln!("mut  : {:#?}", named_field.mutability);
-                        if let Type::Path(named_path) = &named_field.ty {
-                            // eprintln!("path : {:#?}", named_path.path.segments);
-                            // let i = &named_ident.to_string().clone();
-                            // let p = &named_path.to_token_stream().to_string();
-                            // eprintln!("i: {:#?}", i);
-                            // eprintln!("p: {:#?}", p);
-                            field_vec.push(format!(
-                                "{}:Option<{}>",
-                                &named_ident.to_string(),
-                                &named_path.to_token_stream().to_string()
-                            ))
-                        }
-                    } else {
-                        continue;
-                    }
-                    // eprintln!("!!!: {:#?}", named_field);
+                    let i = &named_field.ident;
+                    let t = &named_field.ty;
+                    field_vec.push(quote!(
+                        #i: std::option::Option<#t>
+                    ));
+                    empty_field_vec.push(quote!(
+                        #i: None
+                    ));
                 }
             }
         }
-        Data::Union(_) => {
-            panic!("invalid data type: {:?}", &ast.data);
-        }
+        _ => panic!("invalid derive type: not a struct"),
     }
 
-    // eprintln!("current_dir type: {:#?}", &ast);
-    eprintln!("field_vec: {:#?}", field_vec);
-
-    // let field_str =
-    // let field_str = field_vec
-    //     .iter()
-    //     .fold(String::new(), |r, e| format!("{}\n{}", r, e.as_str()));
-    let fs = field!(field_vec);
+    // eprintln!("field_vec: {:#?}", field_vec);
 
     quote!(
         impl #ident {
             pub fn builder() -> #builder_ident {
                 #builder_ident {
-                    #fs
-                    // executable: None,
-                    // args: None,
-                    // env: None,
-                    // current_dir: None,
-
+                    #(#empty_field_vec,)*
                 }
             }
         }
 
         pub struct #builder_ident {
-            executable: Option<String>,
-            args: Option<Vec<String>>,
-            env: Option<Vec<String>>,
-            current_dir: Option<String>,
+            #(#field_vec,)*
         }
 
         impl #builder_ident {
