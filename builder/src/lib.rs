@@ -18,7 +18,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let mut field_vec: Vec<proc_macro2::TokenStream> = vec![];
     let mut empty_field_vec: Vec<proc_macro2::TokenStream> = vec![];
     let mut field_method_vec: Vec<proc_macro2::TokenStream> = vec![];
-    let mut field_check_none_vec: Vec<proc_macro2::TokenStream> = vec![];
     let mut field_build_vec: Vec<proc_macro2::TokenStream> = vec![];
 
     if let Data::Struct(s) = &ast.data {
@@ -69,12 +68,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     empty_field_vec.push(quote!(
                         #i: None
                     ));
-                    field_check_none_vec.push(
-                        quote!(
-                                if self.#i.is_none() {
-                                    return Err(std::boxed::Box::<dyn std::error::Error>::from(format!("{} not set", "#i")))
-                                })
-                    );
                 }
                 // eprintln!("named_field: {:#?}", named_field);
             }
