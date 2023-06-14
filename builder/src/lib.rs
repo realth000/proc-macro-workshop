@@ -87,7 +87,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
                                 }
                             ));
                         } else {
-                            panic!("can not find type in Option")
+                            return syn::Error::new_spanned(
+                                &segments[0],
+                                "can not find type in Option".to_string(),
+                            )
+                            .to_compile_error()
+                            .into();
                         }
                     } else {
                         field_vec.push(quote!(
@@ -98,7 +103,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
                         ));
                         if let Some(..) = each {
                             if segments.is_empty() || segments[0].ident != "Vec" {
-                                panic!("builder(each={}) used on a not Vec<> field", each.unwrap())
+                                return syn::Error::new_spanned(
+                                    &segments[0],
+                                    "`each=()` used on a not vector field".to_string(),
+                                )
+                                .to_compile_error()
+                                .into();
                             }
                             if let Some(vec_type) = segments[0]
                                 .arguments
@@ -121,10 +131,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
                                     }
                                 ));
                             } else {
-                                panic!(
-                                    "can not find what T in {} when parsing as Vec<T>",
-                                    segments[0].to_token_stream()
+                                return syn::Error::new_spanned(
+                                    &segments[0],
+                                    "can not find what T when parsing as Vec<T>",
                                 )
+                                .to_compile_error()
+                                .into();
                             }
                         } else {
                             field_method_vec.push(quote!(
@@ -143,7 +155,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
         }
     } else {
-        panic!("invalid derive type: not a struct")
+        return syn::Error::new(ident.span(), "invalid derive type: not a struct")
+            .to_compile_error()
+            .into();
     }
 
     // eprintln!("field_vec: {:#?}", field_vec);
