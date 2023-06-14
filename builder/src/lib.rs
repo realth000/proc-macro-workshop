@@ -176,7 +176,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }
 
         impl #builder_ident {
-            pub fn build(&mut self) -> Result<#ident, std::boxed::Box<dyn std::error::Error>> {
+            pub fn build(&mut self) -> std::result::Result<#ident, std::boxed::Box<dyn std::error::Error>> {
                 Ok(#ident{
                     #(#field_build_vec,)*
                 })
@@ -184,5 +184,5 @@ pub fn derive(input: TokenStream) -> TokenStream {
             #(#field_method_vec)*
         }
     )
-    .into()
+        .into()
 }
