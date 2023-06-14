@@ -2,11 +2,11 @@ use proc_macro::TokenStream;
 
 use proc_macro2::Ident;
 use quote::{quote, ToTokens};
-use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
+use syn::{parse_macro_input, Data, DeriveInput, Fields, Meta, Type};
 
 static OPTION_MODIFIER: [&str; 4] = ["<", ">", "(", ")"];
 
-#[proc_macro_derive(Builder)]
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let ident = &ast.ident;
@@ -23,6 +23,22 @@ pub fn derive(input: TokenStream) -> TokenStream {
     if let Data::Struct(s) = &ast.data {
         if let Fields::Named(named_fields) = &s.fields {
             for named_field in named_fields.named.iter() {
+                let mut each: Option<String> = None;
+                for attr in &named_field.attrs {
+                    let p = attr.meta.path().segments.first();
+                    if p.is_none() || p.unwrap().ident != "builder" {
+                        continue;
+                    }
+                    if let Meta::List(meta) = &attr.meta {
+                        for x in meta.tokens.clone().into_iter() {
+                            if let proc_macro2::TokenTree::Literal(l) = x {
+                                each = Some(String::from(l.to_string().trim_matches('"')));
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
                 let i = &named_field.ident;
                 let t = &named_field.ty;
                 if let Type::Path(path) = t {
@@ -58,12 +74,44 @@ pub fn derive(input: TokenStream) -> TokenStream {
                         field_build_vec.push(quote!(
                             #i: self.#i.clone().unwrap_or_default()
                         ));
-                        field_method_vec.push(quote!(
-                            pub fn #i(&mut self, #i: #t) -> &mut Self {
-                                self.#i = Some(#i);
-                                self
+                        if let Some(..) = each {
+                            if segments.is_empty() || segments[0].ident != "Vec" {
+                                panic!("builder(each={}) used on a not Vec<> field", each.unwrap())
                             }
-                        ));
+                            if let Some(vec_type) = segments[0]
+                                .arguments
+                                .to_token_stream()
+                                .to_string()
+                                .split(' ')
+                                .find(|e| !OPTION_MODIFIER.contains(e))
+                            {
+                                let each_ident = Ident::new(each.unwrap().as_str(), ident.span());
+                                let vec_type_ident = Ident::new(vec_type, ident.span());
+                                field_method_vec.push(quote!(
+                                    pub fn #each_ident(&mut self, #each_ident: #vec_type_ident) -> &mut Self {
+                                        if self.#i.is_none() {
+                                            self.#i = Some(Vec::new())
+                                        }
+                                        if let Some(ref mut v) =  self.#i {
+                                            v.push(#each_ident);
+                                        }
+                                        self
+                                    }
+                                ));
+                            } else {
+                                panic!(
+                                    "can not find what T in {} when parsing as Vec<T>",
+                                    segments[0].to_token_stream()
+                                )
+                            }
+                        } else {
+                            field_method_vec.push(quote!(
+                                pub fn #i(&mut self, #i: #t) -> &mut Self {
+                                    self.#i = Some(#i);
+                                    self
+                                }
+                            ));
+                        }
                     }
                     empty_field_vec.push(quote!(
                         #i: None
