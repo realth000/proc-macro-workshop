@@ -27,6 +27,18 @@ by other authors.*
 
 <br>
 
+## Status
+
+Passed:
+
+- [x] builder
+- [ ] debug
+- [ ] seq
+- [ ] sorted
+- [ ] bitfield
+
+<br>
+
 ## Suggested prerequisites
 
 This workshop covers attribute macros, derive macros, and function-like
