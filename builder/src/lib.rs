@@ -31,9 +31,31 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     }
                     if let Meta::List(meta) = &attr.meta {
                         for x in meta.tokens.clone().into_iter() {
-                            if let proc_macro2::TokenTree::Literal(l) = x {
-                                each = Some(String::from(l.to_string().trim_matches('"')));
-                                break;
+                            match x {
+                                proc_macro2::TokenTree::Ident(i) => {
+                                    if i != "each" {
+                                        // Here we can use format! to show custom message but in
+                                        // test 08 it requires a const one.
+                                        // format!("unknown attribute {}", i)
+                                        //
+                                        // Test 08 requires the error message to mark all tokens
+                                        // inside the unrecognized attribute, thus use new_spanned()
+                                        // instead of new(), the latter one only mark the current
+                                        // span.
+                                        //
+                                        return syn::Error::new_spanned(
+                                            &attr.meta,
+                                            "expected `builder(each = \"...\")`".to_string(),
+                                        )
+                                        .to_compile_error()
+                                        .into();
+                                    }
+                                }
+                                proc_macro2::TokenTree::Literal(l) => {
+                                    each = Some(String::from(l.to_string().trim_matches('"')));
+                                    break;
+                                }
+                                _ => continue,
                             }
                         }
                     }
