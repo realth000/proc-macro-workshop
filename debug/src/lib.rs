@@ -4,7 +4,7 @@ use quote::quote;
 use syn::{parse_macro_input, Data, DeriveInput, Expr, Fields, Lit, Meta};
 
 macro_rules! compile_error {
-    ($span: expr, $($arg: tt)*) => {
+    ($span: expr, $($arg: expr)*) => {
         syn::Error::new($span, format!($($arg)*))
             .to_compile_error()
             .into()
@@ -24,45 +24,77 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let ident = &ast.ident;
     let mut field_vec: Vec<proc_macro2::TokenStream> = vec![];
-    if let Data::Struct(s) = &ast.data {
-        if let Fields::Named(named_fields) = &s.fields {
-            for named_field in named_fields.named.iter() {
-                let mut debug_attr_format: Option<String> = None;
-                for attr in &named_field.attrs {
-                    let p = attr.meta.path().segments.first();
-                    if p.is_none() || p.unwrap().ident != "debug" {
-                        continue;
-                    }
-                    if let Meta::NameValue(meta) = &attr.meta {
-                        if let Expr::Lit(lit) = &meta.value {
-                            if let Lit::Str(s) = &lit.lit {
-                                debug_attr_format =
-                                    Some(s.token().to_string().trim_matches('"').to_string());
-                                // eprintln!("lit: {}", s.token());
-                                // eprintln!("type:{:?}", debug_attr_format);
-                            }
-                        }
-                    }
-                }
-                let i = &named_field.ident.clone().unwrap();
-                let s = ident_token_str!(i);
-                if debug_attr_format.is_some() {
-                    // Here use ident_token_str! macro rules to make an literal ident.
-                    let format_token = ident_token_str!(debug_attr_format.as_ref().unwrap());
-                    field_vec.push(quote!(
-                        .field(#s, &format_args!(#format_token, &self.#i))
-                    ));
-                } else {
-                    field_vec.push(quote!(
-                        .field(#s, &self.#i)
-                    ));
-                }
-            }
-        }
+
+    let data_struct = if let Data::Struct(data_struct) = &ast.data {
+        data_struct
     } else {
         return compile_error!(ident.span(), "invalid struct type");
+    };
+    let named_fields = if let Fields::Named(named_fields) = &data_struct.fields {
+        named_fields
+    } else {
+        return TokenStream::new();
+    };
+
+    for named_field in named_fields.named.iter() {
+        let mut debug_attr_format: Option<String> = None;
+        for attr in &named_field.attrs {
+            let p = attr.meta.path().segments.first();
+            if p.is_none() || p.unwrap().ident != "debug" {
+                continue;
+            }
+
+            // The following code may be a prettier version of nested `if let` expressions like this:
+            //
+            // ```
+            // if let syn::Meta::NameValue(meta) = &attr.meta {
+            //     if let syn::Expr::Lit(lit) = &meta.value {
+            //         if let syn::Lit::Str(s) = &lit.lit {
+            //             debug_attr_format =
+            //                 Some(s.token().to_string().trim_matches('"').to_string());
+            //             // eprintln!("lit: {}", s.token());
+            //             // eprintln!("type:{:?}", debug_attr_format);
+            //         }
+            //     }
+            // }
+            // ```
+            if let Meta::NameValue(syn::MetaNameValue {
+                value:
+                    Expr::Lit(syn::ExprLit {
+                        lit: Lit::Str(ref s),
+                        ..
+                    }),
+                ..
+            }) = &attr.meta
+            {
+                debug_attr_format = Some(s.token().to_string().trim_matches('"').to_string());
+                // eprintln!("lit: {}", s.token());
+                // eprintln!("type:{:?}", debug_attr_format);
+            }
+        }
+        let i = &named_field.ident.as_ref().unwrap();
+        let s = ident_token_str!(i);
+
+        let field_print = match debug_attr_format {
+            Some(v) => {
+                // Here use ident_token_str! macro rules to make an literal ident.
+                let format_token = ident_token_str!(v);
+                quote!(
+                    .field(#s, &format_args!(#format_token, &self.#i))
+                )
+            }
+            None => {
+                quote!(
+                    .field(#s, &self.#i)
+                )
+            }
+        };
+
+        field_vec.push(field_print);
     }
+
     let s = ident_token_str!(ident);
+
     quote!(
         impl std::fmt::Debug for #ident {
            fn fmt(&self, f: &mut std::fmt::Formatter<'_>)  -> std::fmt::Result {
