@@ -1,8 +1,10 @@
 use proc_macro::TokenStream;
 
-use proc_macro2::Ident;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Expr, Fields, GenericParam, Lit, Meta, Type};
+use syn::{
+    parse_macro_input, parse_quote, Data, DeriveInput, Expr, ExprLit, Fields, GenericParam,
+    Generics, Lit, Meta, MetaNameValue,
+};
 
 macro_rules! compile_error {
     ($span: expr, $($arg: expr)*) => {
@@ -37,25 +39,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
         return TokenStream::new();
     };
 
-    let mut generics = if let syn::Generics { params: g, .. } = &ast.generics {
-        if g.is_empty() {
-            None
-        } else {
-            let mut s: Option<Ident> = None;
-            for t in g {
-                match t {
-                    GenericParam::Type(v) => {
-                        s = Some(v.ident.clone());
-                        break;
-                    }
-                    _ => continue,
-                }
-            }
-            s
-        }
-    } else {
-        None
-    };
+    let generics = add_trait_bounds(ast.generics);
+    let (impl_generics, ty_generics, where_clause) = &generics.split_for_impl();
 
     for named_field in named_fields.named.iter() {
         let mut debug_attr_format: Option<String> = None;
@@ -79,9 +64,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
             //     }
             // }
             // ```
-            if let Meta::NameValue(syn::MetaNameValue {
+            if let Meta::NameValue(MetaNameValue {
                 value:
-                    Expr::Lit(syn::ExprLit {
+                    Expr::Lit(ExprLit {
                         lit: Lit::Str(ref s),
                         ..
                     }),
@@ -92,26 +77,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 // eprintln!("lit: {}", s.token());
                 // eprintln!("type:{:?}", debug_attr_format);
             }
-        }
-
-        // Special check for generics
-        if generics.is_some() {
-            if let Type::Path(syn::TypePath {
-                path: syn::Path { segments, .. },
-                ..
-            }) = &named_field.ty
-            {
-                for seg in segments {
-                    if seg.ident == generics.clone().unwrap() {
-                        generics = Some(seg.ident.clone());
-                        // FIXME: ident here is still T when compiling struct. But when constructing
-                        // an instance there should be the actual generic type, only then can apply
-                        // and check the real type.
-                        panic!("generics: {:#?}", seg.ident);
-                        break;
-                    }
-                }
-            };
         }
 
         let i = &named_field.ident.as_ref().unwrap();
@@ -137,26 +102,26 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let s = ident_token_str!(ident);
 
-    let body = quote!(
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>)  -> std::fmt::Result {
-             f.debug_struct(#s)
-             #(#field_vec)*
-             .finish()
-        }
-    );
-    match &generics {
-        Some(generic_type) => {
-            quote!(
-                impl<#generic_type> std::fmt::Debug for #ident<#generic_type> {
-                    #body
-                }
-            )
-        }
-        None => quote!(
-            impl std::fmt::Debug for #ident {
-                #body
+    quote!(
+        impl #impl_generics std::fmt::Debug for #ident #ty_generics #where_clause {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>)  -> std::fmt::Result {
+                f.debug_struct(#s)
+                #(#field_vec)*
+                .finish()
             }
-        ),
-    }
+        }
+    )
     .into()
+}
+
+// Comments in 04-type-parameter said that this macro should add trait bound.
+// Implement like:
+// https://github.com/dtolnay/syn/blob/master/examples/heapsize/heapsize_derive/src/lib.rs
+fn add_trait_bounds(mut generics: Generics) -> Generics {
+    for param in &mut generics.params {
+        if let GenericParam::Type(ref mut type_param) = *param {
+            type_param.bounds.push(parse_quote!(std::fmt::Debug));
+        }
+    }
+    generics
 }
