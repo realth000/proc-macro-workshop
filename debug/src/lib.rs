@@ -3,7 +3,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
     parse_macro_input, parse_quote, Data, DeriveInput, Expr, ExprLit, Fields, GenericParam,
-    Generics, Lit, Meta, MetaNameValue,
+    Generics, Lit, Meta, MetaNameValue, PredicateType, WhereClause, WherePredicate,
 };
 
 macro_rules! compile_error {
@@ -39,8 +39,21 @@ pub fn derive(input: TokenStream) -> TokenStream {
         return TokenStream::new();
     };
 
-    let generics = add_trait_bounds(ast.generics);
-    let (impl_generics, ty_generics, where_clause) = &generics.split_for_impl();
+    // From 05-phantom-data on, add trait bound per field, not per generic type.
+    // So _generics is not used.
+    let _generics = add_trait_bounds(ast.generics.clone());
+
+    let (impl_generics, ty_generics, where_clause) = &ast.generics.split_for_impl();
+    let mut where_clause_ex = match where_clause {
+        Some(v) => WhereClause {
+            where_token: v.where_token,
+            predicates: v.predicates.clone(),
+        },
+        None => WhereClause {
+            where_token: Default::default(),
+            predicates: Default::default(),
+        },
+    };
 
     for named_field in named_fields.named.iter() {
         let mut debug_attr_format: Option<String> = None;
@@ -82,6 +95,15 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let i = &named_field.ident.as_ref().unwrap();
         let s = ident_token_str!(i);
 
+        where_clause_ex
+            .predicates
+            .push(WherePredicate::Type(PredicateType {
+                lifetimes: None,
+                bounded_ty: named_field.ty.clone(),
+                colon_token: Default::default(),
+                bounds: parse_quote!(std::fmt::Debug),
+            }));
+
         let field_print = match debug_attr_format {
             Some(v) => {
                 // Here use ident_token_str! macro rules to make an literal ident.
@@ -103,7 +125,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let s = ident_token_str!(ident);
 
     quote!(
-        impl #impl_generics std::fmt::Debug for #ident #ty_generics #where_clause {
+        impl #impl_generics std::fmt::Debug for #ident #ty_generics #where_clause_ex {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>)  -> std::fmt::Result {
                 f.debug_struct(#s)
                 #(#field_vec)*
