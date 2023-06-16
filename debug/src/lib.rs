@@ -1,9 +1,12 @@
 use proc_macro::TokenStream;
+use std::collections::HashMap;
 
+use proc_macro2::Ident;
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_quote, Data, DeriveInput, Expr, ExprLit, Fields, GenericParam,
-    Generics, Lit, Meta, MetaNameValue, PredicateType, WhereClause, WherePredicate,
+    parse_macro_input, parse_quote, Data, DeriveInput, Expr, ExprLit, Fields, GenericArgument,
+    GenericParam, Generics, Lit, Meta, MetaNameValue, Path, PathArguments, PredicateType, Type,
+    TypePath, WhereClause, WherePredicate,
 };
 
 macro_rules! compile_error {
@@ -27,6 +30,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let ident = &ast.ident;
     let mut field_vec: Vec<proc_macro2::TokenStream> = vec![];
+    let mut generic_map: HashMap<Ident, bool> = HashMap::new();
 
     let data_struct = if let Data::Struct(data_struct) = &ast.data {
         data_struct
@@ -43,7 +47,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
     // So _generics is not used.
     let _generics = add_trait_bounds(ast.generics.clone());
 
+    for param in &ast.generics.params {
+        if let GenericParam::Type(gt) = param {
+            generic_map.insert(gt.ident.clone(), true);
+        }
+    }
+
     let (impl_generics, ty_generics, where_clause) = &ast.generics.split_for_impl();
+    // panic!("impl_generics: {:#?}", impl_generics);
     let mut where_clause_ex = match where_clause {
         Some(v) => WhereClause {
             where_token: v.where_token,
@@ -56,6 +67,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     };
 
     for named_field in named_fields.named.iter() {
+        let mut current_generic: Option<Ident> = None;
         let mut debug_attr_format: Option<String> = None;
         for attr in &named_field.attrs {
             let p = attr.meta.path().segments.first();
@@ -95,14 +107,42 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let i = &named_field.ident.as_ref().unwrap();
         let s = ident_token_str!(i);
 
-        where_clause_ex
-            .predicates
-            .push(WherePredicate::Type(PredicateType {
-                lifetimes: None,
-                bounded_ty: named_field.ty.clone(),
-                colon_token: Default::default(),
-                bounds: parse_quote!(std::fmt::Debug),
-            }));
+        if let Type::Path(TypePath {
+            path: Path { segments, .. },
+            ..
+        }) = &named_field.ty
+        {
+            for segment in segments {
+                if let PathArguments::AngleBracketed(ab) = &segment.arguments {
+                    if generic_map.contains_key(&segment.ident) {
+                        current_generic = Some(segment.ident.clone());
+                    } else if !ab.args.is_empty() && segment.ident == "PhantomData" {
+                        for arg in &ab.args {
+                            if let GenericArgument::Type(Type::Path(TypePath {
+                                path: Path { segments: ss, .. },
+                                ..
+                            })) = arg
+                            {
+                                generic_map.insert(ss.first().unwrap().clone().ident, false);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if current_generic.is_some() && generic_map[&current_generic.unwrap()] {
+            where_clause_ex
+                .predicates
+                .push(WherePredicate::Type(PredicateType {
+                    lifetimes: None,
+                    bounded_ty: named_field.ty.clone(),
+                    colon_token: Default::default(),
+                    bounds: parse_quote!(std::fmt::Debug),
+                }));
+        }
+
+        // panic!("where: {:#?}", where_clause_ex.predicates);
 
         let field_print = match debug_attr_format {
             Some(v) => {

@@ -75,8 +75,9 @@
 // signatures, as well as trait bounds on impls of public traits for public
 // types.
 
-use derive_debug::CustomDebug;
 use std::fmt::Debug;
+
+use derive_debug::CustomDebug;
 
 #[derive(CustomDebug)]
 pub struct One<T> {
