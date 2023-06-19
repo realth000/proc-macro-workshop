@@ -70,5 +70,5 @@ fn main() {
     struct NotDebug;
 
     assert_debug::<PhantomData<NotDebug>>();
-    // assert_debug::<Field<NotDebug>>();
+    assert_debug::<Field<NotDebug>>();
 }

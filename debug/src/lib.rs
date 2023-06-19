@@ -113,10 +113,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
         }) = &named_field.ty
         {
             for segment in segments {
+                // For 04-type-parameter, T.
+                if generic_map.contains_key(&segment.ident) {
+                    current_generic = Some(segment.ident.clone());
+                    break;
+                }
                 if let PathArguments::AngleBracketed(ab) = &segment.arguments {
-                    if generic_map.contains_key(&segment.ident) {
-                        current_generic = Some(segment.ident.clone());
-                    } else if !ab.args.is_empty() && segment.ident == "PhantomData" {
+                    // For 05-phantom-data, PhantomData<T>.
+                    if !ab.args.is_empty() && segment.ident == "PhantomData" {
                         for arg in &ab.args {
                             if let GenericArgument::Type(Type::Path(TypePath {
                                 path: Path { segments: ss, .. },
