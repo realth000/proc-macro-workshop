@@ -32,7 +32,7 @@ by other authors.*
 Passed:
 
 - [x] builder
-- [ ] debug
+- [x] debug
 - [ ] seq
 - [ ] sorted
 - [ ] bitfield
