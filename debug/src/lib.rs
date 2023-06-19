@@ -30,7 +30,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let ident = &ast.ident;
     let mut field_vec: Vec<proc_macro2::TokenStream> = vec![];
-    let mut generic_map: HashMap<Ident, bool> = HashMap::new();
+    // For `PhantomData` type, if the generic type (such as `T`) only exists in `PhantomData`, do
+    // not generate trait bound for `T`.
+    // Here uses a `HashMap` to record whether a generic type only exists in `PhantomData`.
+    // If true, Ident only exists in `PhantomData`.
+    // If false, Ident not exists in `PhantomData` or both in/out `PhantomData`.
+    let mut phantom_generic_map: HashMap<Ident, bool> = HashMap::new();
 
     let data_struct = if let Data::Struct(data_struct) = &ast.data {
         data_struct
@@ -43,13 +48,28 @@ pub fn derive(input: TokenStream) -> TokenStream {
         return TokenStream::new();
     };
 
+    // This is a bad solution:
     // From 05-phantom-data on, add trait bound per field, not per generic type.
     // So _generics is not used.
+    //
+    // Why? as 06-bound-trouble says, rust compile may refuse to compile some too deep nested generic
+    // types.
+    //
+    // What's the best practise?
+    // Follow the guide in 05-phantom-data, rules are:
+    // 1. Generate trait bound for every generic type, not field:
+    //   BAD:  Foo<T> : Debug
+    //   GOOD: T : Debug
+    // 2. When a generic type ident ONLY exists in `PhantomData`, do not add trait bound for it.
+    //
+    // So the solution is, lookup every field and find generics only exist in `PhantomData`,
+    // finally generate trait bound for all other generic types.
     let _generics = add_trait_bounds(ast.generics.clone());
 
+    // Record all generic type names.
     for param in &ast.generics.params {
         if let GenericParam::Type(gt) = param {
-            generic_map.insert(gt.ident.clone(), true);
+            phantom_generic_map.insert(gt.ident.clone(), false);
         }
     }
 
@@ -67,7 +87,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
     };
 
     for named_field in named_fields.named.iter() {
-        let mut current_generic: Option<Ident> = None;
         let mut debug_attr_format: Option<String> = None;
         for attr in &named_field.attrs {
             let p = attr.meta.path().segments.first();
@@ -114,12 +133,21 @@ pub fn derive(input: TokenStream) -> TokenStream {
         {
             for segment in segments {
                 // For 04-type-parameter, T.
-                if generic_map.contains_key(&segment.ident) {
-                    current_generic = Some(segment.ident.clone());
+                // struct S<T> {
+                //   foo: T,
+                // }
+                if phantom_generic_map.contains_key(&segment.ident) {
                     break;
                 }
+                // For 05-phantom-data, T.
+                // struct S<T> {
+                //   foo: Bar<T>,
+                // }
                 if let PathArguments::AngleBracketed(ab) = &segment.arguments {
                     // For 05-phantom-data, PhantomData<T>.
+                    // struct S<T> {
+                    //   foo: PhantomData<T>,
+                    // }
                     if !ab.args.is_empty() && segment.ident == "PhantomData" {
                         for arg in &ab.args {
                             if let GenericArgument::Type(Type::Path(TypePath {
@@ -127,23 +155,17 @@ pub fn derive(input: TokenStream) -> TokenStream {
                                 ..
                             })) = arg
                             {
-                                generic_map.insert(ss.first().unwrap().clone().ident, false);
+                                if phantom_generic_map
+                                    .contains_key(&ss.first().unwrap().clone().ident)
+                                {
+                                    phantom_generic_map
+                                        .insert(ss.first().unwrap().clone().ident, true);
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-
-        if current_generic.is_some() && generic_map[&current_generic.unwrap()] {
-            where_clause_ex
-                .predicates
-                .push(WherePredicate::Type(PredicateType {
-                    lifetimes: None,
-                    bounded_ty: named_field.ty.clone(),
-                    colon_token: Default::default(),
-                    bounds: parse_quote!(std::fmt::Debug),
-                }));
         }
 
         // panic!("where: {:#?}", where_clause_ex.predicates);
@@ -164,6 +186,21 @@ pub fn derive(input: TokenStream) -> TokenStream {
         };
 
         field_vec.push(field_print);
+    }
+
+    // Avoid add trait bound to generics only used in `PhantomData`.
+    for (generic_ident, only_in_phantom) in &phantom_generic_map {
+        if *only_in_phantom {
+            continue;
+        }
+        where_clause_ex
+            .predicates
+            .push(WherePredicate::Type(PredicateType {
+                lifetimes: None,
+                bounded_ty: parse_quote!(#generic_ident),
+                colon_token: Default::default(),
+                bounds: parse_quote!(std::fmt::Debug),
+            }));
     }
 
     let s = ident_token_str!(ident);
