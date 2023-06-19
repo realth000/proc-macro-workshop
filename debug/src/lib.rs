@@ -35,7 +35,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     // Here uses a `HashMap` to record whether a generic type only exists in `PhantomData`.
     // If true, Ident only exists in `PhantomData`.
     // If false, Ident not exists in `PhantomData` or both in/out `PhantomData`.
-    let mut phantom_generic_map: HashMap<Ident, bool> = HashMap::new();
+    let mut phantom_generic_map: HashMap<Ident, (bool, Option<Type>)> = HashMap::new();
 
     let data_struct = if let Data::Struct(data_struct) = &ast.data {
         data_struct
@@ -69,7 +69,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     // Record all generic type names.
     for param in &ast.generics.params {
         if let GenericParam::Type(gt) = param {
-            phantom_generic_map.insert(gt.ident.clone(), false);
+            phantom_generic_map.insert(gt.ident.clone(), (false, None));
         }
     }
 
@@ -148,19 +148,36 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     // struct S<T> {
                     //   foo: PhantomData<T>,
                     // }
-                    if !ab.args.is_empty() && segment.ident == "PhantomData" {
-                        for arg in &ab.args {
-                            if let GenericArgument::Type(Type::Path(TypePath {
-                                path: Path { segments: ss, .. },
-                                ..
-                            })) = arg
+                    if ab.args.is_empty() {
+                        continue;
+                    }
+
+                    for arg in &ab.args {
+                        if let GenericArgument::Type(Type::Path(TypePath { path, .. })) = arg {
+                            let ss = &path.segments;
+                            if !phantom_generic_map.contains_key(&ss.first().unwrap().clone().ident)
                             {
-                                if phantom_generic_map
-                                    .contains_key(&ss.first().unwrap().clone().ident)
-                                {
-                                    phantom_generic_map
-                                        .insert(ss.first().unwrap().clone().ident, true);
-                                }
+                                continue;
+                            }
+                            if segment.ident == "PhantomData" {
+                                phantom_generic_map
+                                    .insert(ss.first().unwrap().clone().ident, (true, None));
+                            } else {
+                                // For 07-associated-type, T::Value, where T is a trait.
+                                // struct Foo<T: Trait> {
+                                //   values: Vec<T::Value>,
+                                // }
+                                // Here store full path to generate trait bound looks like T::Value : Debug.
+                                phantom_generic_map.insert(
+                                    ss.first().unwrap().clone().ident,
+                                    (
+                                        false,
+                                        Some(Type::Path(TypePath {
+                                            qself: None,
+                                            path: path.clone(),
+                                        })),
+                                    ),
+                                );
                             }
                         }
                     }
@@ -189,7 +206,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
     }
 
     // Avoid add trait bound to generics only used in `PhantomData`.
-    for (generic_ident, only_in_phantom) in &phantom_generic_map {
+    for (generic_ident, (only_in_phantom, ident_vec)) in &phantom_generic_map {
         if *only_in_phantom {
             continue;
         }
@@ -197,7 +214,14 @@ pub fn derive(input: TokenStream) -> TokenStream {
             .predicates
             .push(WherePredicate::Type(PredicateType {
                 lifetimes: None,
-                bounded_ty: parse_quote!(#generic_ident),
+                bounded_ty: match ident_vec {
+                    // 04, 06
+                    Some(v) => v.clone(),
+                    // 07
+                    None => {
+                        parse_quote!(#generic_ident)
+                    }
+                },
                 colon_token: Default::default(),
                 bounds: parse_quote!(std::fmt::Debug),
             }));
