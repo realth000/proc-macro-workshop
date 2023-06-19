@@ -1,12 +1,14 @@
 use proc_macro::TokenStream;
 use std::collections::HashMap;
 
-use proc_macro2::Ident;
+use proc_macro2::{Ident, Span};
 use quote::quote;
+use syn::punctuated::Punctuated;
 use syn::{
     parse_macro_input, parse_quote, Data, DeriveInput, Expr, ExprLit, Fields, GenericArgument,
-    GenericParam, Generics, Lit, Meta, MetaNameValue, Path, PathArguments, PredicateType, Type,
-    TypePath, WhereClause, WherePredicate,
+    GenericParam, Generics, Lit, Meta, MetaNameValue, Path, PathArguments, PathSegment,
+    PredicateType, Token, TraitBound, TraitBoundModifier, Type, TypeParamBound, TypePath,
+    WhereClause, WherePredicate,
 };
 
 macro_rules! compile_error {
@@ -29,6 +31,11 @@ macro_rules! ident_token_str {
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
     let ident = &ast.ident;
+    // if ident == "Field" {
+    //     return TokenStream::new();
+    // } else {
+    //     panic!("{:#?}", ast);
+    // }
     let mut field_vec: Vec<proc_macro2::TokenStream> = vec![];
     // For `PhantomData` type, if the generic type (such as `T`) only exists in `PhantomData`, do
     // not generate trait bound for `T`.
@@ -47,6 +54,24 @@ pub fn derive(input: TokenStream) -> TokenStream {
     } else {
         return TokenStream::new();
     };
+
+    // 08-escape-hatch
+    // Find and record `#[debug(bound = "T::Value: Debug")]`
+    let mut outer_bound: Option<String> = None;
+    for attr in &ast.attrs {
+        if let Meta::List(meta_list) = &attr.meta {
+            if !meta_list.path.segments.is_empty()
+                && meta_list.path.segments.first().unwrap().ident == "debug"
+            {
+                match trait_bound_token(&meta_list.tokens) {
+                    Some(bound) => {
+                        outer_bound = Some(bound);
+                    }
+                    None => continue,
+                }
+            }
+        }
+    }
 
     // This is a bad solution:
     // From 05-phantom-data on, add trait bound per field, not per generic type.
@@ -229,16 +254,33 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let s = ident_token_str!(ident);
 
-    quote!(
-        impl #impl_generics std::fmt::Debug for #ident #ty_generics #where_clause_ex {
+    let body = quote!(
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>)  -> std::fmt::Result {
                 f.debug_struct(#s)
                 #(#field_vec)*
                 .finish()
             }
+    );
+
+    let expanded: TokenStream = match outer_bound {
+        Some(bound) => {
+            let outer_bound_where_clause = str_to_where_clause(bound.as_str(), ident.span());
+            quote!(
+                impl #impl_generics std::fmt::Debug for #ident #ty_generics #outer_bound_where_clause {
+                    #body
+                }
+            )
+                .into()
         }
-    )
-    .into()
+        None => quote!(
+            impl #impl_generics std::fmt::Debug for #ident #ty_generics #where_clause_ex {
+                #body
+            }
+        )
+        .into(),
+    };
+
+    expanded
 }
 
 // Comments in 04-type-parameter said that this macro should add trait bound.
@@ -251,4 +293,94 @@ fn add_trait_bounds(mut generics: Generics) -> Generics {
         }
     }
     generics
+}
+
+// FIXME: Now only check type, sort not checked.
+fn trait_bound_token(token: &proc_macro2::TokenStream) -> Option<String> {
+    if token.is_empty() {
+        return None;
+    }
+    for tt in token.clone().into_iter() {
+        match tt {
+            proc_macro2::TokenTree::Ident(i) => {
+                if i != "bound" {
+                    return None;
+                }
+            }
+            proc_macro2::TokenTree::Punct(p) => {
+                if p.as_char() != '=' {
+                    return None;
+                }
+            }
+            proc_macro2::TokenTree::Literal(l) => {
+                return Some(String::from(l.to_string().trim_matches('"')));
+            }
+            _ => continue,
+        }
+    }
+    None
+}
+
+fn str_to_where_clause(str: &str, span: Span) -> Option<WhereClause> {
+    let pos = match str.rfind(':') {
+        Some(pos) => pos,
+        None => return None,
+    };
+
+    let s1 = str[..pos].to_string();
+    let s2 = str[pos + 1..].to_string();
+
+    let ident = s1.trim();
+    let bound = s2.trim();
+
+    let mut wc = WhereClause {
+        where_token: Default::default(),
+        predicates: Default::default(),
+    };
+
+    // let mut path_segment_punctuated: Punctuated<PathSegment, Token![::]> = Punctuated::new();
+    //
+    // for part in ident.split("::") {
+    //     path_segment_punctuated.push(PathSegment {
+    //         ident: Ident::new(part, span),
+    //         arguments: Default::default(),
+    //     });
+    // }
+
+    let mut bounds_punctuated: Punctuated<TypeParamBound, Token![+]> = Punctuated::new();
+    bounds_punctuated.push(TypeParamBound::Trait(TraitBound {
+        paren_token: None,
+        modifier: TraitBoundModifier::None,
+        lifetimes: None,
+        path: Path {
+            leading_colon: None,
+            segments: build_path_segment_punctuated(bound, span),
+        },
+    }));
+
+    wc.predicates.push(WherePredicate::Type(PredicateType {
+        lifetimes: None,
+        bounded_ty: Type::Path(TypePath {
+            qself: None,
+            path: Path {
+                leading_colon: None,
+                segments: build_path_segment_punctuated(ident, span),
+            },
+        }),
+        colon_token: Default::default(),
+        bounds: bounds_punctuated,
+    }));
+
+    Some(wc)
+}
+
+fn build_path_segment_punctuated(s: &str, span: Span) -> Punctuated<PathSegment, Token![::]> {
+    let mut path_segment_punctuated: Punctuated<PathSegment, Token![::]> = Punctuated::new();
+    for part in s.split("::") {
+        path_segment_punctuated.push(PathSegment {
+            ident: Ident::new(part, span),
+            arguments: Default::default(),
+        });
+    }
+    return path_segment_punctuated;
 }
