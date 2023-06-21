@@ -1,6 +1,6 @@
 use proc_macro::{TokenStream, TokenTree};
 
-use proc_macro2::{Delimiter, Ident, Literal, Span};
+use proc_macro2::{Ident, Literal, Span};
 use quote::{quote, ToTokens, TokenStreamExt};
 use syn::{parse_str, ExprBlock};
 
@@ -139,13 +139,15 @@ fn replace_ident(
     for tt in token_stream.clone().into_iter() {
         match &tt {
             proc_macro2::TokenTree::Group(group) => {
-                ret.extend(replace_ident(variable, value, &group.stream()));
+                let group = proc_macro2::Group::new(
+                    group.delimiter(),
+                    replace_ident(variable, value, &group.stream()),
+                );
+                ret.append(group);
             }
             proc_macro2::TokenTree::Ident(ident) => {
-                let mut x = proc_macro2::TokenStream::new();
-                x.append(target_literal.clone());
                 if *ident == *variable {
-                    ret.append(proc_macro2::Group::new(Delimiter::Parenthesis, x))
+                    ret.append(target_literal.clone());
                 } else {
                     ret.append(ident.clone());
                 }
