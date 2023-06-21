@@ -89,18 +89,17 @@ fn replace_ident(
     for tt in token_stream.clone() {
         match &tt {
             proc_macro2::TokenTree::Group(group) => {
-                let group = proc_macro2::Group::new(
+                let mut g = proc_macro2::Group::new(
                     group.delimiter(),
                     replace_ident(variable, value, &group.stream()),
                 );
-                ret.append(group);
+                // Set span here, or will get wrong error message mark position.
+                g.set_span(group.span());
+                ret.append(g);
             }
-            proc_macro2::TokenTree::Ident(ident) => {
-                if *ident == *variable {
-                    ret.append(target_literal.clone());
-                } else {
-                    ret.append(ident.clone());
-                }
+            // Optimize, using match guard.
+            proc_macro2::TokenTree::Ident(ident) if *ident == *variable => {
+                ret.append(target_literal.clone());
             }
             _ => ret.append(tt),
         }
