@@ -32,8 +32,8 @@ pub fn seq(input: TokenStream) -> TokenStream {
     // 6. Group: stream: TokenStream[..];
     // `token_vec`'s length is always >= 7 otherwise fail to compile.
 
-    let variable_name = Ident::new(&token_vec[0].1, Span::from(token_vec[0].0.span()));
-    let start_value = match token_vec[2].1.parse::<i32>() {
+    let variable = Ident::new(&token_vec[0].1, Span::from(token_vec[0].0.span()));
+    let start = match token_vec[2].1.parse::<i32>() {
         // Ok(_) => Ident::new(token_vec[2].1.as_str(), Span::from(token_vec[2].0.span())),
         Ok(v) => v,
         Err(e) => {
@@ -45,8 +45,7 @@ pub fn seq(input: TokenStream) -> TokenStream {
             );
         }
     };
-    let end_value_str = &token_vec[5].1;
-    let end_value = match end_value_str.parse::<i32>() {
+    let end = match token_vec[5].1.parse::<i32>() {
         Ok(v) => v,
         Err(e) => {
             return compile_error!(
@@ -60,17 +59,15 @@ pub fn seq(input: TokenStream) -> TokenStream {
     // Parse and expand loop body.
     let loop_body = match parse_str::<ExprBlock>(&token_vec[6].1) {
         Ok(ExprBlock { block, .. }) => match first_group(block.to_token_stream()) {
-            Some(group) => {
-                match apply_loop(start_value, end_value, &variable_name, &group.stream()) {
-                    Some(v) => v,
-                    None => {
-                        return compile_error!(
-                            proc_macro2::Span::from(token_vec[6].0.span()),
-                            "failed to apply loop"
-                        );
-                    }
+            Some(group) => match apply_loop(start, end, &variable, &group.stream()) {
+                Some(v) => v,
+                None => {
+                    return compile_error!(
+                        proc_macro2::Span::from(token_vec[6].0.span()),
+                        "failed to apply loop"
+                    );
                 }
-            }
+            },
             None => {
                 return compile_error!(
                     proc_macro2::Span::from(token_vec[6].0.span()),
@@ -78,10 +75,11 @@ pub fn seq(input: TokenStream) -> TokenStream {
                 );
             }
         },
-        _ => {
+        Err(e) => {
             return compile_error!(
                 proc_macro2::Span::from(token_vec[6].0.span()),
-                "failed to parse code as block"
+                "failed to parse code as block: {}",
+                e
             );
         }
     };
@@ -113,16 +111,13 @@ fn apply_loop(
     variable: &Ident,
     token_stream: &proc_macro2::TokenStream,
 ) -> Option<proc_macro2::TokenStream> {
-    let variable_ident = match variable.to_token_stream().into_iter().next() {
-        Some(proc_macro2::TokenTree::Ident(ident)) => ident,
-        _ => return None,
-    };
     let mut ret = proc_macro2::TokenStream::new();
     // Repeat expanding code (end-start) times, apply variable to i in every expand.
     for i in start..end {
         // For every `TokenTree` in token_stream, check, expand and append it to the tail of output.
+        // Seem clone() is required: https://stackoverflow.com/questions/73994927/
         for tt in token_stream.clone() {
-            ret.extend(replace_ident(&variable_ident, i, &tt.to_token_stream()));
+            ret.extend(replace_ident(variable, i, &tt.to_token_stream()));
         }
     }
     Some(ret)
@@ -136,7 +131,7 @@ fn replace_ident(
 ) -> proc_macro2::TokenStream {
     let target_literal = Literal::i32_unsuffixed(value);
     let mut ret = proc_macro2::TokenStream::new();
-    for tt in token_stream.clone().into_iter() {
+    for tt in token_stream.clone() {
         match &tt {
             proc_macro2::TokenTree::Group(group) => {
                 let group = proc_macro2::Group::new(
