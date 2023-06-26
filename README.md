@@ -34,6 +34,8 @@ Passed:
 - [x] builder
 - [x] debug
 - [ ] seq
+  - [x] 00-03
+  - [ ] 04-09
 - [ ] sorted
 - [ ] bitfield
 
