@@ -29,64 +29,14 @@ struct SeqContent {
 
 impl Parse for SeqContent {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let variable: Ident = input.parse()?;
-        let in_mark: Token![in] = input.parse()?;
-        let start: LitInt = input.parse()?;
-        let range_split_mark: Token![..] = input.parse()?;
-        let end: LitInt = input.parse()?;
-
-        // let content: ExprBlock = input.parse()?;
-        //
-        // let result = SeqContent {
-        //     variable,
-        //     in_mark,
-        //     start,
-        //     range_split_mark,
-        //     end,
-        //     content,
-        // };
-        // panic!("true content: {:#?}", result);
-        // return Ok(result);
-
-        // Handle "~N" which is invalid syntax in compile.
-        // When parsing ParseStream, compiler expects no syntax error because otherwise it can not
-        // understand what kinds of tokens are in the ParseStream .
-        //
-        // Therefore convert invalid syntax to valid ones to pass parse.
-        // In this conversion, make that invalid syntax "special" so that when expanding code later,
-        // we can still find out where those "~N" are.
-        // One method is act like a C++ compiler (maybe linker?): add specific prefix or
-        // suffix as mark to help recognizing them.
-        //
-        // TODO: Support flexible suffix.
-        let re = Regex::new(format!("(?P<prefix>\\w+) ~ {}", variable).as_str()).unwrap();
-        // Here should use ${prefix} to represent captured text called "prefix".
-        // And in format! macro, should use "{{" to represent "{".
-        let mark_text = format!("${{prefix}}___NEED_EXPAND___{}", variable);
-        let tmp_str = input.to_string();
-        let result = re.replace_all(tmp_str.as_str(), mark_text);
-        // panic!("{}", result);
-        // let content = syn::ExprBlock::parse(parse_str(result.into_owned().as_str())?)?;
-        let content = if let syn::Expr::Block(block) =
-            parse_str::<syn::Expr>(result.into_owned().as_str())?
-        {
-            block
-        } else {
-            return Err(syn::Error::new(input.span(), "not a valid ExprBlock"));
-        };
-
-        let result = SeqContent {
-            variable,
-            in_mark,
-            start,
-            range_split_mark,
-            end,
-            content,
-        };
-
-        panic!("wrong content: {:#?}", result);
-
-        Ok(result)
+        Ok(SeqContent {
+            variable: input.parse()?,
+            in_mark: input.parse()?,
+            start: input.parse()?,
+            range_split_mark: input.parse()?,
+            end: input.parse()?,
+            content: input.parse()?,
+        })
     }
 }
 
@@ -119,10 +69,28 @@ impl SeqContent {
 
 #[proc_macro]
 pub fn seq(input: TokenStream) -> TokenStream {
-    let seq_content = parse_macro_input!(input as SeqContent);
-    panic!("SUCCESS!!!!");
-
-    // panic!("{:#?}", seq_content.apply_seq());
+    // Handle "~N" which is invalid syntax in compile.
+    // When parsing ParseStream, compiler expects no syntax error because otherwise it can not
+    // understand what kinds of tokens are in the ParseStream .
+    //
+    // Therefore convert invalid syntax to valid ones to pass parse.
+    // In this conversion, make that invalid syntax "special" so that when expanding code later,
+    // we can still find out where those "~N" are.
+    // One method is act like a C++ compiler (maybe linker?): add specific prefix or
+    // suffix as mark to help recognizing them.
+    //
+    // Here should use ${prefix} to represent captured text called "prefix".
+    // And in format! macro, should use "{{" to represent "{".
+    // TODO: Handle general variable, not specified `N`.
+    let re = Regex::new(format!("(?P<prefix>\\w+) ~ {}", "N").as_str()).unwrap();
+    let mark_text = format!("${{prefix}}___NEED_EXPAND___{}", "N");
+    let tmp_str = input.to_string();
+    let result1 = re.replace_all(tmp_str.as_str(), mark_text);
+    let result2 = result1.clone().to_string();
+    let result3 = result2.as_str();
+    let input2: TokenStream = result3.parse().unwrap();
+    let seq_content = parse_macro_input!(input2 as SeqContent);
+    // panic!("{:#?}", seq_content);
 
     let d = match seq_content.apply_seq() {
         Ok(v) => v,
@@ -154,6 +122,15 @@ fn replace_ident(
             proc_macro2::TokenTree::Ident(ident) if *ident == *variable => {
                 ret.append(target_literal.clone());
             }
+            // Handle f~N
+            // proc_macro2::TokenTree::Ident(ident)
+            //     if ident
+            //         .to_string()
+            //         .ends_with(format!("___SEQ_NEED_EXPAND___{}", variable).as_str()) =>
+            // {
+            //     let target_literal = Literal::i32_unsuffixed(value);
+            //     ret.append(target_literal.clone());
+            // }
             _ => ret.append(tt),
         }
     }
