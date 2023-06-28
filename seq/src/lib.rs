@@ -5,9 +5,11 @@ use proc_macro2::{Ident, Literal, Span};
 use quote::{quote, ToTokens, TokenStreamExt};
 use regex::Regex;
 use syn::parse::{Parse, ParseStream};
-use syn::{parse_macro_input, parse_str, ExprBlock, LitInt, Token};
+use syn::{parse_macro_input, ExprBlock, LitInt, Token};
 
 use derive_debug::CustomDebug;
+
+static SEQ_MARK_TEXT: &str = "___SEQ_NEED_EXPAND";
 
 macro_rules! compile_error {
     ($span: expr, $($arg: tt)*) => {
@@ -69,7 +71,6 @@ impl SeqContent {
 
 #[proc_macro]
 pub fn seq(input: TokenStream) -> TokenStream {
-    // Handle "~N" which is invalid syntax in compile.
     // When parsing ParseStream, compiler expects no syntax error because otherwise it can not
     // understand what kinds of tokens are in the ParseStream .
     //
@@ -83,7 +84,7 @@ pub fn seq(input: TokenStream) -> TokenStream {
     // And in format! macro, should use "{{" to represent "{".
     // TODO: Handle general variable, not specified `N`.
     let re = Regex::new(format!("(?P<prefix>\\w+) ~ {}", "N").as_str()).unwrap();
-    let mark_text = format!("${{prefix}}___NEED_EXPAND___{}", "N");
+    let mark_text = format!("${{prefix}}{}{}", SEQ_MARK_TEXT, "N");
     let tmp_str = input.to_string();
     let result1 = re.replace_all(tmp_str.as_str(), mark_text);
     let result2 = result1.clone().to_string();
@@ -123,14 +124,19 @@ fn replace_ident(
                 ret.append(target_literal.clone());
             }
             // Handle f~N
-            // proc_macro2::TokenTree::Ident(ident)
-            //     if ident
-            //         .to_string()
-            //         .ends_with(format!("___SEQ_NEED_EXPAND___{}", variable).as_str()) =>
-            // {
-            //     let target_literal = Literal::i32_unsuffixed(value);
-            //     ret.append(target_literal.clone());
-            // }
+            proc_macro2::TokenTree::Ident(ident)
+                if ident
+                    .to_string()
+                    .ends_with(format!("{}{}", SEQ_MARK_TEXT, variable).as_str()) =>
+            {
+                let old_ident = ident.to_string();
+                let new_ident = old_ident.replace(
+                    format!("{}{}", SEQ_MARK_TEXT, variable).as_str(),
+                    format!("{}", value).as_str(),
+                );
+                let target_literal = Ident::new(new_ident.as_str(), ident.span());
+                ret.append(target_literal.clone());
+            }
             _ => ret.append(tt),
         }
     }
