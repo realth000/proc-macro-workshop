@@ -34,8 +34,10 @@ Passed:
 - [x] builder
 - [x] debug
 - [ ] seq
-  - [x] 00-03
-  - [ ] 04-09
+  - [x] 00-02
+  - [ ] 03 (Solved using regexp, which breaks span in TokenStream)
+  - [x] 04
+  - [ ] 05-09
 - [ ] sorted
 - [ ] bitfield
 
