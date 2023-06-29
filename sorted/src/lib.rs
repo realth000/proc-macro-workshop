@@ -13,7 +13,8 @@ macro_rules! compile_error {
 #[proc_macro_attribute]
 pub fn sorted(args: TokenStream, input: TokenStream) -> TokenStream {
     let _ = args;
-    let item = parse_macro_input!(input as Item);
+    let input2 = input.clone();
+    let item = parse_macro_input!(input2 as Item);
     let item_enum = if let Item::Enum(item_enum) = item {
         item_enum
     } else {
@@ -23,7 +24,9 @@ pub fn sorted(args: TokenStream, input: TokenStream) -> TokenStream {
         );
     };
 
-    // panic!("{:#?}", _ast.variants);
+    // Should return the original stream though it is a derive macro and maybe cause duplicate
+    // definition, otherwise 04-variants-with-data can not pass because of unused import warnings.
+    let mut x: proc_macro2::TokenStream = input.into();
 
     let mut all_ident: Vec<Ident> = item_enum.variants.iter().map(|e| e.ident.clone()).collect();
     let all_ident_orig = all_ident.clone();
@@ -33,9 +36,13 @@ pub fn sorted(args: TokenStream, input: TokenStream) -> TokenStream {
         .zip(all_ident.iter())
         .find(|(orig, sorted)| orig != sorted)
     {
-        return compile_error!(sorted.span(), "{} should sort before {}", sorted, orig);
+        x.extend(
+            syn::Error::new(
+                sorted.span(),
+                format!("{} should sort before {}", sorted, orig),
+            )
+            .to_compile_error(),
+        );
     }
-
-    // panic!("all ident: {:#?}", all_ident);
-    TokenStream::new()
+    x.into()
 }
