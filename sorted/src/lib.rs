@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 
-use syn::{parse_macro_input, Ident, Item};
+use syn::{parse_macro_input, Block, Expr, Ident, Item, ItemFn, Stmt};
 
 macro_rules! compile_error {
     ($span: expr, $($arg: tt)*) => {
@@ -12,6 +12,7 @@ macro_rules! compile_error {
 
 #[proc_macro_attribute]
 pub fn sorted(args: TokenStream, input: TokenStream) -> TokenStream {
+    let xx = input.clone();
     let _ = args;
     let input2 = input.clone();
     let item = parse_macro_input!(input2 as Item);
@@ -45,4 +46,21 @@ pub fn sorted(args: TokenStream, input: TokenStream) -> TokenStream {
         );
     }
     x.into()
+}
+
+#[proc_macro_attribute]
+pub fn check(args: TokenStream, input: TokenStream) -> TokenStream {
+    let _ = args;
+    let match_stmt = if let (ItemFn {
+        block: block_box, ..
+    }) = parse_macro_input!(input as ItemFn)
+    {
+        for stmt in (*block_box).stmts {
+            match stmt {
+                Stmt::Expr(Expr::Match(m, ..), _) => m,
+                _ => continue,
+            }
+        }
+    };
+    panic!("check: {:#?}",);
 }
