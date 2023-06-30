@@ -57,6 +57,7 @@ pub fn check(args: TokenStream, input: TokenStream) -> TokenStream {
     let _ = args;
     let input_clone = input.clone();
     let mut ast = parse_macro_input!(input_clone as ItemFn);
+    // panic!("{:#?}", ast);
 
     // Call visit_item_fn_mut and our overloaded visit_expr_match_mut will be called when
     // caught a match expression.
@@ -126,15 +127,18 @@ impl VisitMut for TraceMatch {
             // Found #[sorted]
             let mut arm_vec = vec![];
             for arm in &i.arms {
-                // Check Pat type, only support Pat::Path, Pat::TupleStruct and Pat::Struct.
+                // Check Pat type, only support Pat::Path, Pat::TupleStruct, Pat::Struct, and
+                // Pat::Ident and Path::Wild (required by 08-underscore).
+                // In fact, whether a Pat type is supported is in our control.
                 match arm.pat {
-                    Pat::Path(_) => {
-                        arm_vec.push(arm);
-                    }
-                    Pat::TupleStruct(_) => {
-                        arm_vec.push(arm);
-                    }
-                    Pat::Struct(_) => {
+                    // Though multiple condition types in the same arm is not supported because
+                    // when capturing the inner variable will occur more than one error, when we
+                    // do not need the inner variable, using underscore allow to do so.
+                    Pat::Path(_)
+                    | Pat::TupleStruct(_)
+                    | Pat::Struct(_)
+                    | Pat::Ident(_)
+                    | Pat::Wild(_) => {
                         arm_vec.push(arm);
                     }
                     _ => {
