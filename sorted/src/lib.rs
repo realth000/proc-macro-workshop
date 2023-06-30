@@ -1,9 +1,8 @@
 use proc_macro::TokenStream;
 
 use quote::{quote, ToTokens};
-use syn::spanned::Spanned;
 use syn::visit_mut::{visit_expr_match_mut, VisitMut};
-use syn::{parse_macro_input, Arm, ExprMatch, Ident, Item, ItemFn};
+use syn::{parse_macro_input, Arm, ExprMatch, Ident, Item, ItemFn, Pat, Path};
 
 use derive_debug::CustomDebug;
 
@@ -66,22 +65,20 @@ pub fn check(args: TokenStream, input: TokenStream) -> TokenStream {
     let mut ret: proc_macro2::TokenStream = quote!(#ast);
     // After checking, the modified (removed #[sorted] attr on functions) ast is here, use it as
     // the basic result token stream.
+
     match &tm.not_sorted {
         Some((orig, sorted)) => {
+            // panic!("{:#?}", &sorted.pat);
+            let err = match &sorted.pat {
+                Pat::Path(e) => wrap_error_stream(PathPat::Path(e.path.clone()), sorted, orig),
+                Pat::TupleStruct(e) => {
+                    wrap_error_stream(PathPat::Path(e.path.clone()), sorted, orig)
+                }
+                Pat::Struct(e) => wrap_error_stream(PathPat::Path(e.path.clone()), sorted, orig),
+                _ => wrap_error_stream(PathPat::Pat(sorted.pat.clone()), sorted, orig),
+            };
             // TODO: Better name resolving by parsing pat.
-            let u1 = sorted.pat.to_token_stream().to_string().find('(').unwrap();
-            let u2 = orig.pat.to_token_stream().to_string().find('(').unwrap();
-            ret.extend(
-                syn::Error::new(
-                    sorted.span(),
-                    format!(
-                        "{} should sort before {}",
-                        &sorted.pat.to_token_stream().to_string()[..u1],
-                        &orig.pat.to_token_stream().to_string()[..u2]
-                    ),
-                )
-                .to_compile_error(),
-            );
+            ret.extend(err);
         }
         None => {}
     }
@@ -120,13 +117,7 @@ impl VisitMut for TraceMatch {
                 arm_vec.push(arm);
             }
             let arm_vec_orig = arm_vec.clone();
-            arm_vec.sort_by(|arm, arm2| {
-                // TODO: Better comparing by parsing pat.
-                // Should use "Io" and "Fmt" to compare, now using "Io(e)" and "Fmt(e).
-                let p = arm.pat.to_token_stream().to_string();
-                let p2 = arm2.pat.to_token_stream().to_string();
-                p.cmp(&p2)
-            });
+            arm_vec.sort_by(|arm, arm2| pat_to_string(&arm.pat).cmp(&pat_to_string(&arm2.pat)));
             match arm_vec_orig
                 .iter()
                 .zip(arm_vec.iter())
@@ -139,4 +130,52 @@ impl VisitMut for TraceMatch {
             }
         }
     }
+}
+
+// Used to generate error message.
+// Remove argument and braces.
+// Error::IO(e) => "Error::IO"
+fn pat_to_string(pat: &Pat) -> String {
+    let orig_str = pat.to_token_stream().to_string();
+    match orig_str.find('(') {
+        Some(u) => &orig_str[..u],
+        None => &orig_str,
+    }
+    .replace(' ', "")
+}
+
+// Combine `Path` and `Pat` together so that we can use them generate compile error
+// in the same function.
+enum PathPat {
+    Path(Path),
+    Pat(Pat),
+}
+
+// Wrap `Path` or `Pat` to a compile error converted `TokeStream`
+// Note that the output is required to be the full path:
+// e.g.
+// Error::IO(e) => xxx,
+// ^^^^^^^^^
+// So use `Error::new_spanned` with the `Path` span.
+// Actually all types in 06-pattern-path are going in `Path` type, `Pat` is only fallback.
+fn wrap_error_stream(e: PathPat, sorted: &Arm, orig: &Arm) -> proc_macro2::TokenStream {
+    match e {
+        PathPat::Path(p) => syn::Error::new_spanned(
+            p,
+            format!(
+                "{} should sort before {}",
+                pat_to_string(&sorted.pat),
+                pat_to_string(&orig.pat),
+            ),
+        ),
+        PathPat::Pat(p) => syn::Error::new_spanned(
+            p,
+            format!(
+                "{} should sort before {}",
+                pat_to_string(&sorted.pat),
+                pat_to_string(&orig.pat),
+            ),
+        ),
+    }
+    .to_compile_error()
 }
