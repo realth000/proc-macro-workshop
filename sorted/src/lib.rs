@@ -60,7 +60,10 @@ pub fn check(args: TokenStream, input: TokenStream) -> TokenStream {
 
     // Call visit_item_fn_mut and our overloaded visit_expr_match_mut will be called when
     // caught a match expression.
-    let mut tm = TraceMatch { not_sorted: None };
+    let mut tm = TraceMatch {
+        not_sorted: None,
+        not_support: None,
+    };
     tm.visit_item_fn_mut(&mut ast);
     let mut ret: proc_macro2::TokenStream = quote!(#ast);
     // After checking, the modified (removed #[sorted] attr on functions) ast is here, use it as
@@ -82,6 +85,14 @@ pub fn check(args: TokenStream, input: TokenStream) -> TokenStream {
         }
         None => {}
     }
+    match &tm.not_support {
+        Some(arm) => {
+            ret.extend(
+                syn::Error::new_spanned(&arm.pat, "unsupported by #[sorted]").to_compile_error(),
+            );
+        }
+        None => {}
+    }
     ret.into()
 }
 
@@ -90,6 +101,7 @@ pub fn check(args: TokenStream, input: TokenStream) -> TokenStream {
 #[derive(CustomDebug)]
 struct TraceMatch {
     not_sorted: Option<(Arm, Arm)>,
+    not_support: Option<Arm>,
 }
 
 impl VisitMut for TraceMatch {
@@ -114,7 +126,22 @@ impl VisitMut for TraceMatch {
             // Found #[sorted]
             let mut arm_vec = vec![];
             for arm in &i.arms {
-                arm_vec.push(arm);
+                // Check Pat type, only support Pat::Path, Pat::TupleStruct and Pat::Struct.
+                match arm.pat {
+                    Pat::Path(_) => {
+                        arm_vec.push(arm);
+                    }
+                    Pat::TupleStruct(_) => {
+                        arm_vec.push(arm);
+                    }
+                    Pat::Struct(_) => {
+                        arm_vec.push(arm);
+                    }
+                    _ => {
+                        self.not_support = Some(arm.clone());
+                        return;
+                    }
+                }
             }
             let arm_vec_orig = arm_vec.clone();
             arm_vec.sort_by(|arm, arm2| pat_to_string(&arm.pat).cmp(&pat_to_string(&arm2.pat)));
