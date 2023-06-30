@@ -38,7 +38,7 @@ Passed:
   - [ ] 03 (Solved using regexp, which breaks span in TokenStream)
   - [x] 04
   - [ ] 05-09
-- [ ] sorted
+- [x] sorted
 - [ ] bitfield
 
 <br>
