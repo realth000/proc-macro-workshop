@@ -11,5 +11,20 @@
 // From the perspective of a user of this crate, they get all the necessary APIs
 // (macro, trait, struct) through the one bitfield crate.
 pub use bitfield_impl::bitfield;
+use seq::seq;
 
-// TODO other things
+// BITS is a constant for every B* form B1 to B64, shows actually how many bits used.
+pub trait Specifier {
+    const BITS: i32;
+}
+
+// Definite B1 to B64.
+// Each B* should set the actual bits size.
+seq!(N in 1..65 {
+    pub enum B~N {
+    }
+
+    impl Specifier for B~N {
+        const BITS: i32 = N;
+    }
+});
