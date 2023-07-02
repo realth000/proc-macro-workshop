@@ -54,8 +54,8 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
 
     let mut field_method_vec: Vec<proc_macro2::TokenStream> = vec![];
 
-    let mut bits_sum: usize = 0;
-    let mut bits_current: usize = 0;
+    let mut bits_sum = quote!(0);
+    let mut bits_current = proc_macro2::TokenStream::new();
     // Suppress warning: unused variables.
     let _ = bits_current;
     for named_field in named_fields {
@@ -64,20 +64,9 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
                 // Find the B* type in xxx::xxx::B*.
                 let last_path = type_path.path.segments.last().unwrap();
                 let bits_type = last_path.to_token_stream().to_string();
-                match bits_type[1..].parse::<usize>() {
-                    Ok(v) => {
-                        // bits_current = u8::try_from(v).unwrap();
-                        bits_current = v;
-                    }
-                    Err(e) => {
-                        return compile_error!(
-                            last_path.ident.span(),
-                            "failed to parse bits size: {}",
-                            e
-                        );
-                    }
-                };
-                // let bits = <bits_type as Specifier>::BITS;
+                let bits_type_ident = Ident::new(bits_type.as_str(), last_path.span());
+                // Use trait to get bits count later in compile, not here.
+                bits_current = quote!(<#bits_type_ident as Specifier>::BITS as usize);
             }
             _ => {
                 continue;
@@ -109,23 +98,17 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
             }
         ));
 
-        bits_sum += bits_current;
+        bits_sum = quote!(#bits_sum + #bits_current);
     }
 
     let mut expand = proc_macro2::TokenStream::new();
 
-    let check_bits_multiple_eight = if bits_sum % 8 == 0 {
-        quote!(
-            type CheckData = EightMod8;
-        )
-    } else {
-        quote!(
-            type CheckData = SevenMod8;
-        )
-    };
+    let molding_result = quote!((#bits_sum) % 8 );
 
     // Bits to Bytes.
-    bits_sum /= 8;
+    // Notice that #bits_sum is joined like 1 + 2 + 3,
+    // so when converting to Bytes, use (#bits_sum) / 8 which actually is (1 + 2 + 3) /8.
+    bits_sum = quote!((#bits_sum) / 8);
 
     expand.extend(quote!(
         #[repr(C)]
@@ -145,7 +128,7 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
 
         impl BitParse for #name_ident {
             type Data = [u8; #bits_sum];
-            #check_bits_multiple_eight
+            const CHECK_DATA : usize = #molding_result;
 
             fn get_data(&self) -> &Self::Data {
                &self.data

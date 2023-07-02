@@ -1,11 +1,9 @@
-use bitfield_checks::TotalSizeIsMultipleOfEightBits;
-
 // Use this trait to "attach" getters and setters to #[bitfield].
 //
 // When getting and setting values, just pass in its offset in `data` and its length.
 pub trait BitParse {
     type Data: AsRef<[u8]> + AsMut<[u8]> + Sized;
-    type CheckData: TotalSizeIsMultipleOfEightBits;
+    const CHECK_DATA: usize;
 
     fn get_data(&self) -> &Self::Data;
 
