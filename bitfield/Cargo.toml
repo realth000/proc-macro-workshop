@@ -13,6 +13,7 @@ path = "tests/progress.rs"
 trybuild = { version = "1.0.49", features = ["diff"] }
 
 [dependencies]
+bitfield-checks = { path = "checks" }
 bitfield-impl = { path = "impl" }
+bitfield-parse = { path = "parse" }
 seq = { path = "../seq" }
-bit_parse = { path = "bit_parse" }

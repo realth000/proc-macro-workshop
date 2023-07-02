@@ -10,8 +10,9 @@
 //
 // From the perspective of a user of this crate, they get all the necessary APIs
 // (macro, trait, struct) through the one bitfield crate.
-pub use bit_parse::BitParse;
+pub use bitfield_checks::{EightMod8, SevenMod8, TotalSizeIsMultipleOfEightBits};
 pub use bitfield_impl::bitfield;
+pub use bitfield_parse::BitParse;
 use seq::seq;
 
 // BITS is a constant for every B* form B1 to B64, shows actually how many bits used.

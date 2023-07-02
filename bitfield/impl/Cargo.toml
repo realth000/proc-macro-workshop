@@ -9,8 +9,8 @@ proc-macro = true
 
 [dependencies]
 # TODO
-syn = { version = "2.0.15", features = ["full"] }
-quote = "1.0.26"
-proc-macro2 = "1.0.56"
+bitfield-parse = { path = "../parse" }
 derive_debug = { path = "../../debug" }
-bit_parse = { path = "../bit_parse" }
+syn = { version = "2.0.15", features = ["full"] }
+proc-macro2 = "1.0.56"
+quote = "1.0.26"

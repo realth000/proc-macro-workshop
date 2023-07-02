@@ -64,9 +64,6 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
                 // Find the B* type in xxx::xxx::B*.
                 let last_path = type_path.path.segments.last().unwrap();
                 let bits_type = last_path.to_token_stream().to_string();
-                if !bits_type.starts_with('B') {
-                    return compile_error!(last_path.ident.span(), "expected B* type here");
-                }
                 match bits_type[1..].parse::<usize>() {
                     Ok(v) => {
                         // bits_current = u8::try_from(v).unwrap();
@@ -75,7 +72,7 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
                     Err(e) => {
                         return compile_error!(
                             last_path.ident.span(),
-                            "failed to parse bits size{}",
+                            "failed to parse bits size: {}",
                             e
                         );
                     }
@@ -115,10 +112,22 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
         bits_sum += bits_current;
     }
 
+    let mut expand = proc_macro2::TokenStream::new();
+
+    let check_bits_multiple_eight = if bits_sum % 8 == 0 {
+        quote!(
+            type CheckData = EightMod8;
+        )
+    } else {
+        quote!(
+            type CheckData = SevenMod8;
+        )
+    };
+
     // Bits to Bytes.
     bits_sum /= 8;
 
-    quote!(
+    expand.extend(quote!(
         #[repr(C)]
         pub struct #name_ident {
             data: [u8; #bits_sum],
@@ -136,6 +145,7 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
 
         impl BitParse for #name_ident {
             type Data = [u8; #bits_sum];
+            #check_bits_multiple_eight
 
             fn get_data(&self) -> &Self::Data {
                &self.data
@@ -145,6 +155,7 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
                &mut self.data
             }
         }
-    )
-    .into()
+    ));
+
+    expand.into()
 }
