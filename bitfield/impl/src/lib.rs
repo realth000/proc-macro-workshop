@@ -103,7 +103,8 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
 
     let mut expand = proc_macro2::TokenStream::new();
 
-    let molding_result = quote!((#bits_sum) % 8 );
+    // (<A as Specifier>::BITS +  <B as Specifier>::BITS) % 8
+    let mod_result = quote!((#bits_sum) % 8 );
 
     // Bits to Bytes.
     // Notice that #bits_sum is joined like 1 + 2 + 3,
@@ -128,7 +129,6 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
 
         impl BitParse for #name_ident {
             type Data = [u8; #bits_sum];
-            const CHECK_DATA : usize = #molding_result;
 
             fn get_data(&self) -> &Self::Data {
                &self.data
@@ -138,7 +138,40 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
                &mut self.data
             }
         }
+        const x : [usize; 1] = [0];
+        const _ : usize = x[#mod_result];
+        // const _ : EightMod8 = if #mod_result == 0 { EightMod8 } else { SevenMod8 };
+        // const _ : () = { let check : EightMod8 = if #mod_result == 0 { EightMod8 } else { SevenMod8 };};
+        // const _ : () = {
+        //     let x = [Box::new(EightMod8)];
+        //     let check : Box<dyn TotalSizeIsMultipleOfEightBits> = x[#mod_result];
+        // };
     ));
+
+    // Q:
+    // 1. How to handle type alias in procedural macro?
+    //
+    // 2. How to generic an error when some condition triggered and also support type alias?
+    // According to builder/05-phantom-data.rs, name resolution (know what type is an ident) is later
+    // than macro expansion in rust compiling, makes it impossible to handle type alias.
+    //
+    // A:
+    // 1. Reserve some value like expression in macro.
+    //    For example, we want to see how many bits each field consumes in #[bitfield]. Normally we
+    //    can calculate that just with type name: `B1` use 1 bit, `B2` use 2 bits...
+    //    With type alias, like `type A = B1` in 04-type-parameter, we do not know what `A` actually
+    //    stand for, so just use trait system and `BITS` const in `Specifier` trait:
+    //      `let bits_sum = (A as Specifier)::BITS + (B as Specifier)::BITS + ...`
+    //    In fact the expression above equals to what we calculate from the type name, only difference
+    //    is it is calculated later in compiling.
+    // 2. Trick is here: https://github.com/zjp-CN/proc-macro-workshop/commit/644637fd5343312b27ff24caa7ece225e25622d0
+    //    1) Use `compile_error!` macro does not help because name resolution is after macro expand,
+    //       actual value is unknown when compiling `compile_error!` line.
+    //    2) Use `panic!` does not help because it only works in running and will not cause compile
+    //       to fail.
+    //    So use an anonymous const variant `const _ : type = xxx` to achieve this.
+    //    Also notice that a const in trait implementation **in `quote!`** does not help this,
+    //    maybe because compiling steps.
 
     expand.into()
 }

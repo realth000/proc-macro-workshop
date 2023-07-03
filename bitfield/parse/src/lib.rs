@@ -3,7 +3,6 @@
 // When getting and setting values, just pass in its offset in `data` and its length.
 pub trait BitParse {
     type Data: AsRef<[u8]> + AsMut<[u8]> + Sized;
-    const CHECK_DATA: usize;
 
     fn get_data(&self) -> &Self::Data;
 
