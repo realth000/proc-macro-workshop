@@ -3,9 +3,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::{quote, ToTokens};
 use syn::spanned::Spanned;
-use syn::{
-    parse_macro_input, Expr, ExprLit, Fields, FieldsNamed, Item, ItemStruct, Lit, Type, Variant,
-};
+use syn::{parse_macro_input, Expr, ExprLit, Fields, FieldsNamed, Item, ItemStruct, Lit, Type};
 
 macro_rules! compile_error {
     ($span: expr, $($arg: tt)*) => {
@@ -62,13 +60,35 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
     let _ = bits_current;
     for named_field in named_fields {
         let bits_type_ident: Ident;
+
+        // Special check for `bool` type.
+        // When using `bool`, use `B1` to impl `Specifier` trait
+        // and getter/setter use `bool` as return/arg type.
+        let mut use_bool = false;
+
+        // Special check for custom type.
+        // When using `B1` ~ `B64`, assume that use is using the enum generated in ../src/lib.rs and
+        // not special.
+        // When using enum with macro `#[derive(BitfieldSpecifier)]`, think it's a custom type
+        // and getter/setter use the original type as return/arg type.
+        let mut use_custom = false;
         match &named_field.ty {
             Type::Path(type_path) => {
                 // Find the B* type in xxx::xxx::B*.
                 let last_path = type_path.path.segments.last().unwrap();
                 let bits_type = last_path.to_token_stream().to_string();
-                bits_type_ident = Ident::new(bits_type.as_str(), last_path.span());
                 // Use trait to get bits count later in compile, not here.
+                bits_type_ident = if bits_type == "bool" {
+                    use_bool = true;
+                    Ident::new("B1", last_path.span())
+                } else {
+                    // TODO: Fix `B1` ~ `B64` type check.
+                    // Here should use some thing like:
+                    // const ALL_TYPE: [&str; 64] = seq!(N in 1..65 {"B~N",});
+                    // But till now `seq!` does not support that.
+                    use_custom = !bits_type.as_str().starts_with('B') && bits_type.len() > 1;
+                    Ident::new(bits_type.as_str(), last_path.span())
+                };
                 bits_current = quote!(<#bits_type_ident as Specifier>::BITS as usize);
             }
             _ => {
@@ -88,7 +108,34 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
             named_field.span(),
         );
 
-        field_method_vec.push(quote!(
+        if use_bool {
+            field_method_vec.push(quote!(
+                pub fn #bits_field_get_ident(&self) -> bool {
+                    self.get_bits_value(#bits_sum, #bits_current) != 0
+                }
+
+                pub fn #bits_field_set_ident(&mut self, #bits_field_ident : bool) {
+                    match self.set_bits_value(#bits_sum, #bits_current, #bits_field_ident as u64) {
+                        Ok(_) => {},
+                        Err(e) => eprintln!("failed to set {}:{}",#bits_field_name,e),
+                    }
+                }
+            ));
+        } else if use_custom {
+            field_method_vec.push(quote!(
+                pub fn #bits_field_get_ident(&self) -> #bits_type_ident {
+                    #bits_type_ident::from_storage((self.get_bits_value(#bits_sum, #bits_current) as <#bits_type_ident as Specifier>::StorageType))
+                }
+
+                pub fn #bits_field_set_ident(&mut self, #bits_field_ident : #bits_type_ident) {
+                    match self.set_bits_value(#bits_sum, #bits_current, #bits_field_ident as u64) {
+                        Ok(_) => {},
+                        Err(e) => eprintln!("failed to set {}:{}",#bits_field_name,e),
+                    }
+                }
+            ));
+        } else {
+            field_method_vec.push(quote!(
             pub fn #bits_field_get_ident(&self) -> <#bits_type_ident as Specifier>::StorageType {
                 self.get_bits_value(#bits_sum, #bits_current) as <#bits_type_ident as Specifier>::StorageType
             }
@@ -99,7 +146,8 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
                     Err(e) => eprintln!("failed to set {}:{}",#bits_field_name,e),
                 }
             }
-        ));
+            ));
+        }
 
         bits_sum = quote!(#bits_sum + #bits_current);
     }
@@ -181,16 +229,6 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
 
 #[proc_macro_derive(BitfieldSpecifier)]
 pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
-    /*
-
-    pub enum B~N {
-    }
-
-    impl Specifier for B~N {
-        const BITS: i32 = N;
-        type StorageType = u8;
-    }
-     */
     let ast = parse_macro_input!(input as Item);
     let item_enum = if let Item::Enum(item_enum) = &ast {
         item_enum
@@ -203,8 +241,9 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
 
     let spe_ident = &item_enum.ident;
 
-    let mut variant_ident_vec: Vec<proc_macro2::TokenStream> = vec![];
-    let mut x = vec![];
+    let mut variant_str_vec = vec![];
+    let mut variant_try_from_vec: Vec<proc_macro2::TokenStream> = vec![];
+    let mut variant_try_from_v_vec: Vec<proc_macro2::TokenStream> = vec![];
 
     for variant in &item_enum.variants {
         let (_, expr) = match &variant.discriminant {
@@ -217,13 +256,102 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
             }) => t.base10_digits(),
             _ => return compile_error!(expr.span(), "expected literal integer here"),
         };
-        x.push(variant_value);
+        variant_str_vec.push(String::from(variant_value));
     }
-    panic!("alla value: {:#?}", x);
-    quote!(
-        impl Specifier for #spe_ident {
 
+    // Check if enum elements count is 2, 4, 8, 16, 32...
+    let variant_bits_width = match calculate_2_power(variant_str_vec.len()) {
+        Some(v) => v,
+        None => {
+            return compile_error!(
+                item_enum.span(),
+                "expected a power-of-two number of variants in enum: {:#?}",
+                variant_str_vec
+            );
         }
-    )
-    .into()
+    };
+
+    for (i, x) in variant_str_vec.iter().enumerate() {
+        match x.parse::<i32>() {
+            Ok(v) => {
+                if i as i32 != v {
+                    return compile_error!(x.span(), "expected enum value {} here", v);
+                }
+            }
+            Err(e) => {
+                return compile_error!(x.span(), "failed to parse as int: {}", e);
+            }
+        }
+    }
+
+    let variant_equal_b_ident = Ident::new(
+        format!("B{}", variant_bits_width).as_str(),
+        item_enum.span(),
+    );
+
+    // TODO: This for loop is familiar with the former one.
+    for variant in &item_enum.variants {
+        let v_ident = &variant.ident;
+        let (_, expr) = match &variant.discriminant {
+            Some(v) => v,
+            None => return compile_error!(variant.span(), "need enum member value here"),
+        };
+        let variant_value = match expr {
+            Expr::Lit(ExprLit {
+                lit: Lit::Int(t), ..
+            }) => t.base10_digits(),
+            _ => return compile_error!(expr.span(), "expected literal integer here"),
+        };
+
+        let variant_int_value_tmp_name =
+            Ident::new(format!("{}0", v_ident).as_str(), v_ident.span());
+
+        // x if x == MyEnum::A as i32 => Ok(MyEnum::A),
+        // Note that the `x` here should be a value, not a expr, otherwise will fail to compile.
+        // So use a tmp value `variant_int_value_tmp_name` to store.
+        variant_try_from_v_vec.push(quote!(
+            let #variant_int_value_tmp_name = #variant_value.parse::<<#variant_equal_b_ident as Specifier>::StorageType>()
+        ));
+
+        variant_try_from_vec.push(quote!(
+            #variant_int_value_tmp_name if #variant_int_value_tmp_name == #spe_ident::#v_ident as <#variant_equal_b_ident as Specifier>::StorageType => #spe_ident::#v_ident
+        ));
+    }
+
+    let mut expand = proc_macro2::TokenStream::new();
+
+    // Implement `Specifier` trait.
+    expand.extend(quote!(
+        impl Specifier for #spe_ident {
+            const BITS: i32 = #variant_bits_width as i32;
+            type StorageType = <#variant_equal_b_ident as Specifier>::StorageType;
+        }
+
+        impl #spe_ident {
+            pub fn from_storage(i: <#variant_equal_b_ident as Specifier>::StorageType) -> Self {
+                #(#variant_try_from_v_vec;)*
+                match i {
+                    #(#variant_try_from_vec,)*
+                     _ => panic!("invalid ident value {}", i)
+                }
+            }
+        }
+    ));
+
+    expand.extend(quote!());
+
+    expand.into()
+}
+
+fn calculate_2_power(value: usize) -> Option<u32> {
+    if value == 0 || (value & (value - 1)) != 0 {
+        return None;
+    }
+    let mut times = 0;
+    let mut v = value;
+    while v > 1 {
+        v >>= 1;
+        times += 1;
+    }
+    Some(times)
 }

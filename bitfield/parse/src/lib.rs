@@ -65,6 +65,7 @@ pub trait BitParse {
                 // equals to: `v = ((!bit_mask) | (value as u8)) | v;`,
                 // fixed by linter.
                 v |= (!bit_mask) & (value as u8);
+                panic!("!!!!!!!!!!!!!!!!!!!!!!!!! {} {:08b} {:08b}", v, !bit_mask, value as u8);
                 data[outer] = v;
                 value_length = 0;
             } else {
