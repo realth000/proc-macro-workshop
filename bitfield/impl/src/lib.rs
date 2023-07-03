@@ -138,8 +138,8 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
                &mut self.data
             }
         }
-        const x : [usize; 1] = [0];
-        const _ : usize = x[#mod_result];
+        const _x : [usize; 1] = [0];
+        const _ : usize = _x[#mod_result];
         // const _ : EightMod8 = if #mod_result == 0 { EightMod8 } else { SevenMod8 };
         // const _ : () = { let check : EightMod8 = if #mod_result == 0 { EightMod8 } else { SevenMod8 };};
         // const _ : () = {
