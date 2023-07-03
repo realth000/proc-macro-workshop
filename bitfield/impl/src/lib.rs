@@ -3,7 +3,9 @@ use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::{quote, ToTokens};
 use syn::spanned::Spanned;
-use syn::{parse_macro_input, Fields, FieldsNamed, Item, ItemStruct, Type};
+use syn::{
+    parse_macro_input, Expr, ExprLit, Fields, FieldsNamed, Item, ItemStruct, Lit, Type, Variant,
+};
 
 macro_rules! compile_error {
     ($span: expr, $($arg: tt)*) => {
@@ -175,4 +177,53 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
     //    maybe because compiling steps.
 
     expand.into()
+}
+
+#[proc_macro_derive(BitfieldSpecifier)]
+pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
+    /*
+
+    pub enum B~N {
+    }
+
+    impl Specifier for B~N {
+        const BITS: i32 = N;
+        type StorageType = u8;
+    }
+     */
+    let ast = parse_macro_input!(input as Item);
+    let item_enum = if let Item::Enum(item_enum) = &ast {
+        item_enum
+    } else {
+        return compile_error!(
+            proc_macro2::Span::call_site(),
+            "only support #[derive(BitfieldSpecifier)] on enum"
+        );
+    };
+
+    let spe_ident = &item_enum.ident;
+
+    let mut variant_ident_vec: Vec<proc_macro2::TokenStream> = vec![];
+    let mut x = vec![];
+
+    for variant in &item_enum.variants {
+        let (_, expr) = match &variant.discriminant {
+            Some(v) => v,
+            None => return compile_error!(variant.span(), "need enum member value here"),
+        };
+        let variant_value = match expr {
+            Expr::Lit(ExprLit {
+                lit: Lit::Int(t), ..
+            }) => t.base10_digits(),
+            _ => return compile_error!(expr.span(), "expected literal integer here"),
+        };
+        x.push(variant_value);
+    }
+    panic!("alla value: {:#?}", x);
+    quote!(
+        impl Specifier for #spe_ident {
+
+        }
+    )
+    .into()
 }
