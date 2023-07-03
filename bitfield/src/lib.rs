@@ -18,15 +18,47 @@ use seq::seq;
 // BITS is a constant for every B* form B1 to B64, shows actually how many bits used.
 pub trait Specifier {
     const BITS: i32;
+    type StorageType;
 }
 
 // Definite B1 to B64.
 // Each B* should set the actual bits size.
-seq!(N in 1..65 {
+seq!(N in 1..9 {
     pub enum B~N {
     }
 
     impl Specifier for B~N {
         const BITS: i32 = N;
+        type StorageType = u8;
+    }
+});
+
+seq!(N in 9..17 {
+    pub enum B~N {
+    }
+
+    impl Specifier for B~N {
+        const BITS: i32 = N;
+        type StorageType = u16;
+    }
+});
+
+seq!(N in 17..33 {
+    pub enum B~N {
+    }
+
+    impl Specifier for B~N {
+        const BITS: i32 = N;
+        type StorageType = u32;
+    }
+});
+
+seq!(N in 33..65 {
+    pub enum B~N {
+    }
+
+    impl Specifier for B~N {
+        const BITS: i32 = N;
+        type StorageType = u64;
     }
 });

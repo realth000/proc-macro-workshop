@@ -59,12 +59,13 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
     // Suppress warning: unused variables.
     let _ = bits_current;
     for named_field in named_fields {
+        let bits_type_ident: Ident;
         match &named_field.ty {
             Type::Path(type_path) => {
                 // Find the B* type in xxx::xxx::B*.
                 let last_path = type_path.path.segments.last().unwrap();
                 let bits_type = last_path.to_token_stream().to_string();
-                let bits_type_ident = Ident::new(bits_type.as_str(), last_path.span());
+                bits_type_ident = Ident::new(bits_type.as_str(), last_path.span());
                 // Use trait to get bits count later in compile, not here.
                 bits_current = quote!(<#bits_type_ident as Specifier>::BITS as usize);
             }
@@ -86,12 +87,12 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
         );
 
         field_method_vec.push(quote!(
-            pub fn #bits_field_get_ident(&self) -> u64 {
-                self.get_bits_value(#bits_sum, #bits_current)
+            pub fn #bits_field_get_ident(&self) -> <#bits_type_ident as Specifier>::StorageType {
+                self.get_bits_value(#bits_sum, #bits_current) as <#bits_type_ident as Specifier>::StorageType
             }
 
-            pub fn #bits_field_set_ident(&mut self, #bits_field_ident : u64) {
-                match self.set_bits_value(#bits_sum, #bits_current,#bits_field_ident) {
+            pub fn #bits_field_set_ident(&mut self, #bits_field_ident : <#bits_type_ident as Specifier>::StorageType) {
+                match self.set_bits_value(#bits_sum, #bits_current, #bits_field_ident as u64) {
                     Ok(_) => {},
                     Err(e) => eprintln!("failed to set {}:{}",#bits_field_name,e),
                 }
