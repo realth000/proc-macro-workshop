@@ -282,6 +282,9 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
     //
     let mut last_variant_distance = 1;
 
+    // All variant numbers count.
+    let variant_count = item_enum.variants.len() as u32;
+
     // Check if enum elements count is 2, 4, 8, 16, 32...
     let variant_bits_width = match calculate_2_power(item_enum.variants.len()) {
         Some(v) => v,
@@ -300,6 +303,10 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
 
     for (index, variant) in item_enum.variants.iter().enumerate() {
         let v_ident = &variant.ident;
+        let v_ident_upper = Ident::new(
+            format!("{}", v_ident).to_uppercase().to_string().as_str(),
+            v_ident.span(),
+        );
         let variant_int_value_tmp_name = Ident::new(
             to_snake_case(format!("_{}0", v_ident)).as_str(),
             v_ident.span(),
@@ -314,10 +321,13 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
                             _ => return compile_error!(lit.span(), "expected int value here"),
                         };
                         let variant_value = t.base10_digits();
+                        // FIXME: Check Ident value overflow later
+                        // how to parse string to integer in a const function.
                         check_vec.push(quote!(
-                            if (#variant_value.parse::<<#variant_equal_b_ident as Specifier>::StorageType>().unwrap() as u32) > #variant_bits_width {
-                                Self::_bitfield_check_dis(&False, DiscriminantInRange::method);
-                            }
+                            // const #v_ident : u32 =  #variant_bits_width - #variant_value.parse::<<#variant_equal_b_ident as Specifier>::StorageType>().unwrap() as u32;
+                            // if (#variant_value.parse::<<#variant_equal_b_ident as Specifier>::StorageType>().unwrap() as u32) > #variant_bits_width {
+                            //     Self::_bitfield_check_dis(&False, DiscriminantInRange::method);
+                            // }
                         ));
                         variant_try_from_v_vec.push(quote!(
                             let #variant_int_value_tmp_name = #variant_value.parse::<<#variant_equal_b_ident as Specifier>::StorageType>()
@@ -332,9 +342,7 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
                         last_variant_pos = Some(index);
                         last_variant_distance = 1;
                         check_vec.push(quote!(
-                            if ((#path) as u32) > #variant_bits_width {
-                                Self::_bitfield_check_dis(&False, DiscriminantInRange::method);
-                            }
+                            const #v_ident_upper : u32 = #variant_count - ((#path) as u32) - 1;
                         ));
                         variant_try_from_v_vec.push(quote!(
                             let #variant_int_value_tmp_name = #path
@@ -405,9 +413,7 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
                             })),
                         });
                         check_vec.push(quote!(
-                            if ((#expr_binary) as u32) > #variant_bits_width {
-                                Self::_bitfield_check_dis(&False, DiscriminantInRange::method);
-                            }
+                            const #v_ident_upper : u32 = #variant_count - ((#expr_binary) as u32) - 1;
                         ));
                         variant_try_from_v_vec.push(quote!(
                             let #variant_int_value_tmp_name = #expr_binary
@@ -454,7 +460,6 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
 
         impl #spe_ident {
             pub fn from_storage(i: <#variant_equal_b_ident as Specifier>::StorageType) -> Self {
-                // #(#check_vec)*
                 #(#variant_try_from_v_vec;)*
                 match i {
                     #(#variant_try_from_vec,)*
@@ -464,6 +469,9 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
             // const i : u32 = #variant_bits_width as u32 - 2 * #variant_bits_width as u32;
 
             const fn _bitfield_check_dis<T>(_val: &T, _method: fn(&T)){}
+            const fn _x() {
+                #(#check_vec;)*
+            }
         }
     ));
 
