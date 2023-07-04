@@ -1,3 +1,19 @@
+## Status
+
+Passed:
+
+- [x] builder
+- [x] debug
+- [ ] seq
+  - [x] 00-02
+  - [ ] 03 (Solved using regexp, which breaks span in TokenStream)
+  - [x] 04
+  - [ ] 05-09
+- [x] sorted
+- [x] bitfield
+
+<br>
+
 # Rust Latam: procedural macros workshop
 
 *This repo contains a selection of projects designed to learn to write Rust
@@ -25,21 +41,6 @@ by other authors.*
 - [**Workflow**](#workflow) — Recommended way to work through the workshop
 - [**Debugging tips**](#debugging-tips)
 
-<br>
-
-## Status
-
-Passed:
-
-- [x] builder
-- [x] debug
-- [ ] seq
-  - [x] 00-02
-  - [ ] 03 (Solved using regexp, which breaks span in TokenStream)
-  - [x] 04
-  - [ ] 05-09
-- [x] sorted
-- [ ] bitfield
 
 <br>
 
