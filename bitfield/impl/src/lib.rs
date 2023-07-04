@@ -5,7 +5,7 @@ use quote::{quote, ToTokens};
 use syn::spanned::Spanned;
 use syn::{
     parse_macro_input, BinOp, Expr, ExprBinary, ExprLit, Fields, FieldsNamed, Item, ItemStruct,
-    Lit, LitInt, Type,
+    Lit, LitInt, Meta, MetaNameValue, Type,
 };
 
 macro_rules! compile_error {
@@ -61,7 +61,37 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
     let mut bits_current = proc_macro2::TokenStream::new();
     // Suppress warning: unused variables.
     let _ = bits_current;
+
+    let mut check_bits_vec: Vec<proc_macro2::TokenStream> = vec![];
+
     for named_field in named_fields {
+        // If current field has attribute #[bits = x], then check whether this field is really
+        // that length in bits, otherwise do not check.
+        let mut check_bits: Option<usize> = None;
+        let attrs = &named_field.attrs;
+        for attr in attrs {
+            if let Meta::NameValue(MetaNameValue {
+                path,
+                value:
+                    Expr::Lit(ExprLit {
+                        lit: Lit::Int(lit_int),
+                        ..
+                    }),
+                ..
+            }) = &attr.meta
+            {
+                if path.segments.last().unwrap().ident != "bits" {
+                    continue;
+                }
+
+                match lit_int.token().to_string().parse::<usize>() {
+                    Ok(bits) => check_bits = Some(bits),
+                    Err(e) => {
+                        return compile_error!(lit_int.span(), "failed to parse bits count: {}", e);
+                    }
+                };
+            }
+        }
         let bits_type_ident: Ident;
 
         // Special check for `bool` type.
@@ -153,6 +183,22 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
         }
 
         bits_sum = quote!(#bits_sum + #bits_current);
+
+        if let Some(v) = check_bits {
+            let i1 = Ident::new(
+                format!("_{}0", bits_type_ident).to_uppercase().as_str(),
+                bits_type_ident.span(),
+            );
+            let i2 = Ident::new(
+                format!("_{}1", bits_type_ident).to_uppercase().as_str(),
+                bits_type_ident.span(),
+            );
+            // TODO: Optimize bits check not equal error message.
+            check_bits_vec.push(quote!(
+                const #i1 : usize = <#bits_type_ident as Specifier>::BITS as usize - (#v as usize);
+                const #i2 : usize = (#v as usize) - <#bits_type_ident as Specifier>::BITS as usize;
+            ))
+        }
     }
 
     let mut expand = proc_macro2::TokenStream::new();
@@ -200,6 +246,8 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
         //     let x = [Box::new(EightMod8)];
         //     let check : Box<dyn TotalSizeIsMultipleOfEightBits> = x[#mod_result];
         // };
+
+        #(#check_bits_vec)*
     ));
 
     // Q:

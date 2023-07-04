@@ -10,7 +10,7 @@ fn tests() {
     t.pass("tests/07-optional-discriminant.rs");
     t.compile_fail("tests/08-non-power-of-two.rs");
     t.compile_fail("tests/09-variant-out-of-range.rs");
-    //t.pass("tests/10-bits-attribute.rs");
+    t.pass("tests/10-bits-attribute.rs");
     //t.compile_fail("tests/11-bits-attribute-wrong.rs");
     //t.pass("tests/12-accessors-edge.rs");
 }
