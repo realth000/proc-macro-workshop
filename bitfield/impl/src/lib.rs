@@ -240,6 +240,7 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
     };
 
     let spe_ident = &item_enum.ident;
+    let spe_ident_str_ident = spe_ident.to_string();
 
     let mut variant_str_vec = vec![];
     let mut variant_try_from_vec: Vec<proc_macro2::TokenStream> = vec![];
@@ -303,8 +304,10 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
             _ => return compile_error!(expr.span(), "expected literal integer here"),
         };
 
-        let variant_int_value_tmp_name =
-            Ident::new(format!("{}0", v_ident).as_str(), v_ident.span());
+        let variant_int_value_tmp_name = Ident::new(
+            to_snake_case(format!("_{}0", v_ident)).as_str(),
+            v_ident.span(),
+        );
 
         // x if x == MyEnum::A as i32 => Ok(MyEnum::A),
         // Note that the `x` here should be a value, not a expr, otherwise will fail to compile.
@@ -332,7 +335,7 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
                 #(#variant_try_from_v_vec;)*
                 match i {
                     #(#variant_try_from_vec,)*
-                     _ => panic!("invalid ident value {}", i)
+                     _ => panic!("bitfield: invalid enum {} value {}", #spe_ident_str_ident, i)
                 }
             }
         }
@@ -354,4 +357,22 @@ fn calculate_2_power(value: usize) -> Option<u32> {
         times += 1;
     }
     Some(times)
+}
+
+fn to_snake_case(s: String) -> String {
+    let mut ret = String::new();
+    for (index, ch) in s.chars().enumerate() {
+        if ch.is_uppercase() {
+            let chl = ch.to_lowercase().collect::<Vec<_>>()[0];
+            if index == 0 {
+                ret.push(chl);
+            } else {
+                ret.push('_');
+                ret.push(chl);
+            }
+        } else {
+            ret.push(ch);
+        }
+    }
+    ret
 }

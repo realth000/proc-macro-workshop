@@ -61,11 +61,10 @@ pub trait BitParse {
 
                 // Update value.
                 //
-                // This code: `v |= (!bit_mask) | (value as u8);`
-                // equals to: `v = ((!bit_mask) | (value as u8)) | v;`,
-                // fixed by linter.
-                v |= (!bit_mask) & (value as u8);
-                panic!("!!!!!!!!!!!!!!!!!!!!!!!!! {} {:08b} {:08b}", v, !bit_mask, value as u8);
+                // !bit_mask: 00111000  2
+                // value1:    10111100 << 3
+                // value2:    00000011 << 3
+                v |= (!bit_mask) & (((value as u16) << (!bit_mask).trailing_zeros()) as u8);
                 data[outer] = v;
                 value_length = 0;
             } else {
@@ -119,7 +118,7 @@ pub trait BitParse {
                     (0x00FF << (8 - inner)) as u8
                 };
                 // All value is stored in current bit;
-                ret = (data[outer] & !bit_mask) as u64;
+                ret = ((data[outer] & !bit_mask) as u64) >> (!bit_mask).trailing_zeros();
                 // panic!(
                 //     "result!!! {}, {} {}",
                 //     !bit_mask,
