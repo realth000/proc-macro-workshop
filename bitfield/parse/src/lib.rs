@@ -19,7 +19,7 @@ pub trait BitParse {
         let data = d.as_mut();
 
         // Value's length in bits.
-        let mut value_length = ((64 - value.leading_zeros() + 7) / 8) as usize;
+        let mut value_length = 64 - value.leading_zeros() as usize;
         // How many bits are allowed to save this field in this byte.
         let mut allowed_length = allowed_length_bits;
 
@@ -31,7 +31,7 @@ pub trait BitParse {
             )));
         }
 
-        let outer = offset_bits / 8;
+        let mut outer = offset_bits / 8;
         let mut inner = offset_bits % 8;
         let mut bits_empty = 8 - inner;
 
@@ -69,16 +69,14 @@ pub trait BitParse {
                 value_length = 0;
             } else {
                 // First `bits_empty` bits save in current byte.
-                let bit_mask = 0xFF << (8 - inner);
+                let bit_mask = (0x00FF << (8 - inner)) as u8;
 
                 // Clear all bits that belongs to current field.
                 // The head `inner` bits are used by the former field and should not be modified.
                 let mut v = data[outer] & bit_mask;
 
                 // Update value.
-                // This code: `v |= (!bit_mask) | ((value >> (value_length - 8)) as u8);`
-                // equals to: `v = (!bit_mask) | ((value >> (value_length - 8)) as u8) | v;`
-                v |= (!bit_mask) & ((value >> (value_length - 8)) as u8);
+                v |= (!bit_mask) & ((value >> (value_length - (8 - inner))) as u8);
 
                 data[outer] = v;
 
@@ -91,6 +89,7 @@ pub trait BitParse {
                 // Also, all 8 bytes in the next byte is remained for current field.
                 inner = 0;
                 bits_empty = 8;
+                outer += 1;
             }
 
             if value_length == 0 {
@@ -109,8 +108,10 @@ pub trait BitParse {
         let mut outer = offset_bits / 8;
         let mut inner = offset_bits % 8;
 
+        let mut check = vec![];
+
         loop {
-            if length_bits + inner <= 8 {
+            if length + inner <= 8 {
                 let bit_mask = if 8 - inner > length {
                     // (0xFF << (8 - inner)) | (0xFF >> (inner + length))
                     ((0x00FF << (8 - inner)) as u8) | (0xFF >> (inner + length))
@@ -118,7 +119,8 @@ pub trait BitParse {
                     (0x00FF << (8 - inner)) as u8
                 };
                 // All value is stored in current bit;
-                ret = ((data[outer] & !bit_mask) as u64) >> (!bit_mask).trailing_zeros();
+                ret |= ((data[outer] & !bit_mask) as u64) >> (!bit_mask).trailing_zeros();
+                check.push(ret.clone());
                 // panic!(
                 //     "result!!! {}, {} {}",
                 //     !bit_mask,
@@ -129,11 +131,8 @@ pub trait BitParse {
             } else {
                 let bit_mask = (0x00FF << (8 - inner)) as u8;
 
-                let mut v = ret;
-
-                v |= ((data[outer] & !bit_mask) as u64) << (length - 8);
-
-                ret = v;
+                ret |= ((data[outer] & !bit_mask) as u64) << (length - (8 - inner));
+                check.push(ret.clone());
 
                 // The following code: `length -= 8 - inner;`
                 // equals to ` length = length - (8 - inner)`.
