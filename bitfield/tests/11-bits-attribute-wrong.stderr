@@ -1,8 +1,7 @@
-error[E0308]: mismatched types
-  --> tests/11-bits-attribute-wrong.rs:11:14
-   |
-11 |     #[bits = 9]
-   |              ^
-   |              |
-   |              expected an array with a fixed size of 9 elements, found one with 1 element
-   |              help: consider specifying the actual array length: `1`
+error[E0080]: evaluation of constant value failed
+ --> tests/11-bits-attribute-wrong.rs:9:1
+  |
+9 | #[bitfield]
+  | ^^^^^^^^^^^ attempt to compute `1_usize - 9_usize`, which would overflow
+  |
+  = note: this error originates in the attribute macro `bitfield` (in Nightly builds, run with -Z macro-backtrace for more info)
