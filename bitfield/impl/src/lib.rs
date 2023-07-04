@@ -3,7 +3,10 @@ use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::{quote, ToTokens};
 use syn::spanned::Spanned;
-use syn::{parse_macro_input, Expr, ExprLit, Fields, FieldsNamed, Item, ItemStruct, Lit, Type};
+use syn::{
+    parse_macro_input, BinOp, Expr, ExprBinary, ExprLit, Fields, FieldsNamed, Item, ItemStruct,
+    Lit, LitInt, Type,
+};
 
 macro_rules! compile_error {
     ($span: expr, $($arg: tt)*) => {
@@ -242,83 +245,185 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
     let spe_ident = &item_enum.ident;
     let spe_ident_str_ident = spe_ident.to_string();
 
-    let mut variant_str_vec = vec![];
+    let mut variant_vec: Vec<Option<Expr>> = vec![];
+
+    // The following two vectors are used to construct a `match` clause to parse integer back to
+    // enums.
+    //
+    // match v {
+    //     x if x == MyEnum::A as i32 => MyEnum::A,
+    // }
+    //
+    // Note that the `x` here should be a value, not a expr, otherwise will fail to compile.
+    // So use a tmp value `variant_int_value_tmp_name` to store.
     let mut variant_try_from_vec: Vec<proc_macro2::TokenStream> = vec![];
     let mut variant_try_from_v_vec: Vec<proc_macro2::TokenStream> = vec![];
 
-    for variant in &item_enum.variants {
-        let (_, expr) = match &variant.discriminant {
-            Some(v) => v,
-            None => return compile_error!(variant.span(), "need enum member value here"),
-        };
-        let variant_value = match expr {
-            Expr::Lit(ExprLit {
-                lit: Lit::Int(t), ..
-            }) => t.base10_digits(),
-            _ => return compile_error!(expr.span(), "expected literal integer here"),
-        };
-        variant_str_vec.push(String::from(variant_value));
-    }
+    // Record last `Path` type index.
+    // For auto increase value:
+    // 1. enum { Foo1 = F, Foo2, Foo3}: Foo2 = F + 1, so we need to record index of F.
+    // 2. enum { Foo1, Foo2, Foo3}: be `None` means it's value equals to index.
+    let mut last_variant_pos: Option<usize> = None;
+    // Record distance from last `Path` type index.
+    //
+    // const F : usize = 3;
+    // const G : usize = 0;
+    //
+    // enum Foo {
+    //     Foo1 = F, // Last `Path` is here.
+    //     Foo2,     // Distance is 1.
+    //     Foo3,     // Distance is 2.
+    //     Bar1 = G, // Last `Path` update to `G`.
+    //     Bar2,     // Distance is 1.
+    //     Bar3,     // Distance is 2.
+    // }
+    //
+    let mut last_variant_distance = 1;
 
     // Check if enum elements count is 2, 4, 8, 16, 32...
-    let variant_bits_width = match calculate_2_power(variant_str_vec.len()) {
+    let variant_bits_width = match calculate_2_power(item_enum.variants.len()) {
         Some(v) => v,
         None => {
             return compile_error!(
                 item_enum.span(),
-                "expected a power-of-two number of variants in enum: {:#?}",
-                variant_str_vec
+                "enum {} 's number of variants should be 1/2/4/8/16/32.. ",
+                item_enum.ident.to_string()
             );
         }
     };
-
-    for (i, x) in variant_str_vec.iter().enumerate() {
-        match x.parse::<i32>() {
-            Ok(v) => {
-                if i as i32 != v {
-                    return compile_error!(x.span(), "expected enum value {} here", v);
-                }
-            }
-            Err(e) => {
-                return compile_error!(x.span(), "failed to parse as int: {}", e);
-            }
-        }
-    }
 
     let variant_equal_b_ident = Ident::new(
         format!("B{}", variant_bits_width).as_str(),
         item_enum.span(),
     );
 
-    // TODO: This for loop is familiar with the former one.
-    for variant in &item_enum.variants {
+    for (index, variant) in item_enum.variants.iter().enumerate() {
         let v_ident = &variant.ident;
-        let (_, expr) = match &variant.discriminant {
-            Some(v) => v,
-            None => return compile_error!(variant.span(), "need enum member value here"),
-        };
-        let variant_value = match expr {
-            Expr::Lit(ExprLit {
-                lit: Lit::Int(t), ..
-            }) => t.base10_digits(),
-            _ => return compile_error!(expr.span(), "expected literal integer here"),
-        };
-
         let variant_int_value_tmp_name = Ident::new(
             to_snake_case(format!("_{}0", v_ident)).as_str(),
             v_ident.span(),
         );
 
-        // x if x == MyEnum::A as i32 => Ok(MyEnum::A),
-        // Note that the `x` here should be a value, not a expr, otherwise will fail to compile.
-        // So use a tmp value `variant_int_value_tmp_name` to store.
-        variant_try_from_v_vec.push(quote!(
-            let #variant_int_value_tmp_name = #variant_value.parse::<<#variant_equal_b_ident as Specifier>::StorageType>()
-        ));
+        match &variant.discriminant {
+            Some((_, expr)) => {
+                match expr {
+                    Expr::Lit(lit) => {
+                        let t = match &lit.lit {
+                            Lit::Int(t) => t,
+                            _ => return compile_error!(lit.span(), "expected int value here"),
+                        };
+                        let variant_value = t.base10_digits();
+                        variant_try_from_v_vec.push(quote!(
+                            let #variant_int_value_tmp_name = #variant_value.parse::<<#variant_equal_b_ident as Specifier>::StorageType>()
+                        ));
 
-        variant_try_from_vec.push(quote!(
-            #variant_int_value_tmp_name if #variant_int_value_tmp_name == #spe_ident::#v_ident as <#variant_equal_b_ident as Specifier>::StorageType => #spe_ident::#v_ident
-        ));
+                        variant_try_from_vec.push(quote!(
+                            #variant_int_value_tmp_name if #variant_int_value_tmp_name == #spe_ident::#v_ident as <#variant_equal_b_ident as Specifier>::StorageType => #spe_ident::#v_ident
+                        ));
+                        variant_vec.push(Some(Expr::Lit(lit.clone())));
+                    }
+                    Expr::Path(path) => {
+                        last_variant_pos = Some(index);
+                        last_variant_distance = 1;
+                        variant_try_from_v_vec.push(quote!(
+                            let #variant_int_value_tmp_name = #path
+                        ));
+
+                        variant_try_from_vec.push(quote!(
+                            #variant_int_value_tmp_name if #variant_int_value_tmp_name == #spe_ident::#v_ident as <#variant_equal_b_ident as Specifier>::StorageType => #spe_ident::#v_ident
+                        ));
+                        variant_vec.push(Some(Expr::Path(path.clone())));
+                    }
+                    _ => {
+                        return compile_error!(
+                            expr.span(),
+                            "expected value or literal integer here"
+                        );
+                    }
+                };
+            }
+            None => {
+                // Push a `None` to keep value with true index.
+                variant_vec.push(None);
+                match last_variant_pos {
+                    /*
+                    Expr::Binary {
+                        attrs: [],
+                        left: Expr::Path {
+                            attrs: [],
+                            qself: None,
+                            path: Path {
+                                leading_colon: None,
+                                segments: [
+                                    PathSegment {
+                                        ident: Ident {
+                                            ident: "F",
+                                            span: #0 bytes(1133..1134),
+                                        },
+                                        arguments: PathArguments::None,
+                                    },
+                                ],
+                            },
+                        },
+                        op: BinOp::Add(
+                            Plus,
+                        ),
+                        right: Expr::Lit {
+                            attrs: [],
+                            lit: Lit::Int {
+                                token: 2,
+                            },
+                        },
+                    },
+                     */
+                    Some(v) => {
+                        // Have value before, push a Expr::Binary looks like `F + 1`.
+                        let former_value = variant_vec[v].as_ref().unwrap();
+                        let expr_binary = Expr::Binary(ExprBinary {
+                            attrs: vec![],
+                            left: Box::new(former_value.clone()),
+                            op: BinOp::Add(syn::token::Plus {
+                                spans: [variant.span()],
+                            }),
+                            right: Box::new(Expr::Lit(ExprLit {
+                                attrs: vec![],
+                                lit: Lit::Int(LitInt::new(
+                                    format!("{}", last_variant_distance).as_str(),
+                                    variant.span(),
+                                )),
+                            })),
+                        });
+                        variant_try_from_v_vec.push(quote!(
+                            let #variant_int_value_tmp_name = #expr_binary
+                        ));
+                        variant_try_from_vec.push(quote!(
+                            #variant_int_value_tmp_name if #variant_int_value_tmp_name == #spe_ident::#v_ident as <#variant_equal_b_ident as Specifier>::StorageType => #spe_ident::#v_ident
+                        ));
+                        last_variant_distance += 1;
+                    }
+                    None => {
+                        // If no value before.
+                        // let x = ExprLit {
+                        //     attrs: vec![],
+                        //     lit: Lit::Int(LitInt::new(0), ..),
+                        // };
+                        let expr_lit = Expr::Lit(ExprLit {
+                            attrs: vec![],
+                            lit: Lit::Int(LitInt::new(
+                                format!("{}", index).as_str(),
+                                variant.span(),
+                            )),
+                        });
+                        variant_try_from_vec.push(quote!(
+                            let #variant_int_value_tmp_name = #expr_lit;
+                        ));
+                        variant_try_from_vec.push(quote!(
+                            #variant_int_value_tmp_name if #variant_int_value_tmp_name == #spe_ident::#v_ident as <#variant_equal_b_ident as Specifier>::StorageType() => #spe_ident::v_ident
+                        ));
+                    }
+                }
+            }
+        };
     }
 
     let mut expand = proc_macro2::TokenStream::new();
