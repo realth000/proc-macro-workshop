@@ -258,6 +258,8 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
     // So use a tmp value `variant_int_value_tmp_name` to store.
     let mut variant_try_from_vec: Vec<proc_macro2::TokenStream> = vec![];
     let mut variant_try_from_v_vec: Vec<proc_macro2::TokenStream> = vec![];
+    let mut check_vec: Vec<proc_macro2::TokenStream> = vec![];
+    // let mut range_checker = quote!();
 
     // Record last `Path` type index.
     // For auto increase value:
@@ -312,6 +314,11 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
                             _ => return compile_error!(lit.span(), "expected int value here"),
                         };
                         let variant_value = t.base10_digits();
+                        check_vec.push(quote!(
+                            if (#variant_value.parse::<<#variant_equal_b_ident as Specifier>::StorageType>().unwrap() as u32) > #variant_bits_width {
+                                Self::_bitfield_check_dis(&False, DiscriminantInRange::method);
+                            }
+                        ));
                         variant_try_from_v_vec.push(quote!(
                             let #variant_int_value_tmp_name = #variant_value.parse::<<#variant_equal_b_ident as Specifier>::StorageType>()
                         ));
@@ -324,6 +331,11 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
                     Expr::Path(path) => {
                         last_variant_pos = Some(index);
                         last_variant_distance = 1;
+                        check_vec.push(quote!(
+                            if ((#path) as u32) > #variant_bits_width {
+                                Self::_bitfield_check_dis(&False, DiscriminantInRange::method);
+                            }
+                        ));
                         variant_try_from_v_vec.push(quote!(
                             let #variant_int_value_tmp_name = #path
                         ));
@@ -392,9 +404,15 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
                                 )),
                             })),
                         });
+                        check_vec.push(quote!(
+                            if ((#expr_binary) as u32) > #variant_bits_width {
+                                Self::_bitfield_check_dis(&False, DiscriminantInRange::method);
+                            }
+                        ));
                         variant_try_from_v_vec.push(quote!(
                             let #variant_int_value_tmp_name = #expr_binary
                         ));
+                        // range_checker = Some(expr_binary.clone());
                         variant_try_from_vec.push(quote!(
                             #variant_int_value_tmp_name if #variant_int_value_tmp_name == #spe_ident::#v_ident as <#variant_equal_b_ident as Specifier>::StorageType => #spe_ident::#v_ident
                         ));
@@ -436,12 +454,16 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
 
         impl #spe_ident {
             pub fn from_storage(i: <#variant_equal_b_ident as Specifier>::StorageType) -> Self {
+                // #(#check_vec)*
                 #(#variant_try_from_v_vec;)*
                 match i {
                     #(#variant_try_from_vec,)*
                      _ => panic!("bitfield: invalid enum {} value {}", #spe_ident_str_ident, i)
                 }
             }
+            // const i : u32 = #variant_bits_width as u32 - 2 * #variant_bits_width as u32;
+
+            const fn _bitfield_check_dis<T>(_val: &T, _method: fn(&T)){}
         }
     ));
 
