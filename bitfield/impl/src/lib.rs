@@ -285,9 +285,8 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
         Some(v) => v,
         None => {
             return compile_error!(
-                item_enum.span(),
-                "enum {} 's number of variants should be 1/2/4/8/16/32.. ",
-                item_enum.ident.to_string()
+                proc_macro2::Span::call_site(),
+                "BitfieldSpecifier expected a number of variants which is a power of 2",
             );
         }
     };
