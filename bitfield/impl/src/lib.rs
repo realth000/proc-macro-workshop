@@ -16,6 +16,12 @@ macro_rules! compile_error {
     };
 }
 
+#[allow(
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::too_many_lines,
+    clippy::similar_names
+)]
 // Notice that this is a attribute macro, it will replace the `input` TokenStream!
 // See more in sorted/01-parse-enum.rs
 #[proc_macro_attribute]
@@ -24,9 +30,7 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as Item);
     // panic!("{:#?}", ast);
 
-    let item_struct = if let Item::Struct(item_struct) = &ast {
-        item_struct
-    } else {
+    let Item::Struct(item_struct) = &ast else {
         return compile_error!(
             proc_macro2::Span::call_site(),
             "#[bitfield] only support struct types"
@@ -38,7 +42,7 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
         item_struct.span(),
     );
 
-    let named_fields = if let ItemStruct {
+    let ItemStruct {
         fields:
             Fields::Named(FieldsNamed {
                 named: named_fields,
@@ -46,9 +50,7 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
             }),
         ..
     } = &item_struct
-    {
-        named_fields
-    } else {
+    else {
         return compile_error!(
             proc_macro2::Span::call_site(),
             "expected named fields in this struct"
@@ -186,18 +188,18 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
 
         if let Some(v) = check_bits {
             let i1 = Ident::new(
-                format!("_{}0", bits_type_ident).to_uppercase().as_str(),
+                format!("_{bits_type_ident}0").to_uppercase().as_str(),
                 bits_type_ident.span(),
             );
             let i2 = Ident::new(
-                format!("_{}1", bits_type_ident).to_uppercase().as_str(),
+                format!("_{bits_type_ident}1").to_uppercase().as_str(),
                 bits_type_ident.span(),
             );
             // TODO: Optimize bits check not equal error message.
             check_bits_vec.push(quote!(
                 const #i1 : usize = <#bits_type_ident as Specifier>::BITS as usize - (#v as usize);
                 const #i2 : usize = (#v as usize) - <#bits_type_ident as Specifier>::BITS as usize;
-            ))
+            ));
         }
     }
 
@@ -278,12 +280,11 @@ pub fn bitfield(args: TokenStream, input: TokenStream) -> TokenStream {
     expand.into()
 }
 
+#[allow(clippy::missing_panics_doc, clippy::too_many_lines)]
 #[proc_macro_derive(BitfieldSpecifier)]
 pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as Item);
-    let item_enum = if let Item::Enum(item_enum) = &ast {
-        item_enum
-    } else {
+    let Item::Enum(item_enum) = &ast else {
         return compile_error!(
             proc_macro2::Span::call_site(),
             "only support #[derive(BitfieldSpecifier)] on enum"
@@ -330,33 +331,29 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
     //
     let mut last_variant_distance = 1;
 
+    #[allow(clippy::cast_possible_truncation)]
     // All variant numbers count.
     let variant_count = item_enum.variants.len() as u32;
 
     // Check if enum elements count is 2, 4, 8, 16, 32...
-    let variant_bits_width = match calculate_2_power(item_enum.variants.len()) {
-        Some(v) => v,
-        None => {
-            return compile_error!(
-                proc_macro2::Span::call_site(),
-                "BitfieldSpecifier expected a number of variants which is a power of 2",
-            );
-        }
+    let Some(variant_bits_width) = calculate_2_power(item_enum.variants.len()) else {
+        return compile_error!(
+            proc_macro2::Span::call_site(),
+            "BitfieldSpecifier expected a number of variants which is a power of 2",
+        );
     };
 
-    let variant_equal_b_ident = Ident::new(
-        format!("B{}", variant_bits_width).as_str(),
-        item_enum.span(),
-    );
+    let variant_equal_b_ident =
+        Ident::new(format!("B{variant_bits_width}").as_str(), item_enum.span());
 
     for (index, variant) in item_enum.variants.iter().enumerate() {
         let v_ident = &variant.ident;
         let v_ident_upper = Ident::new(
-            format!("{}", v_ident).to_uppercase().to_string().as_str(),
+            format!("{v_ident}").to_uppercase().to_string().as_str(),
             v_ident.span(),
         );
         let variant_int_value_tmp_name = Ident::new(
-            to_snake_case(format!("_{}0", v_ident)).as_str(),
+            to_snake_case(format!("_{v_ident}0").as_str()).as_str(),
             v_ident.span(),
         );
 
@@ -364,9 +361,8 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
             Some((_, expr)) => {
                 match expr {
                     Expr::Lit(lit) => {
-                        let t = match &lit.lit {
-                            Lit::Int(t) => t,
-                            _ => return compile_error!(lit.span(), "expected int value here"),
+                        let Lit::Int(t) = &lit.lit else {
+                            return compile_error!(lit.span(), "expected int value here");
                         };
                         let variant_value = t.base10_digits();
                         // FIXME: Check Ident value overflow later
@@ -412,86 +408,50 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
             None => {
                 // Push a `None` to keep value with true index.
                 variant_vec.push(None);
-                match last_variant_pos {
-                    /*
-                    Expr::Binary {
-                        attrs: [],
-                        left: Expr::Path {
-                            attrs: [],
-                            qself: None,
-                            path: Path {
-                                leading_colon: None,
-                                segments: [
-                                    PathSegment {
-                                        ident: Ident {
-                                            ident: "F",
-                                            span: #0 bytes(1133..1134),
-                                        },
-                                        arguments: PathArguments::None,
-                                    },
-                                ],
-                            },
-                        },
-                        op: BinOp::Add(
-                            Plus,
-                        ),
-                        right: Expr::Lit {
-                            attrs: [],
-                            lit: Lit::Int {
-                                token: 2,
-                            },
-                        },
-                    },
-                     */
-                    Some(v) => {
-                        // Have value before, push a Expr::Binary looks like `F + 1`.
-                        let former_value = variant_vec[v].as_ref().unwrap();
-                        let expr_binary = Expr::Binary(ExprBinary {
-                            attrs: vec![],
-                            left: Box::new(former_value.clone()),
-                            op: BinOp::Add(syn::token::Plus {
-                                spans: [variant.span()],
-                            }),
-                            right: Box::new(Expr::Lit(ExprLit {
-                                attrs: vec![],
-                                lit: Lit::Int(LitInt::new(
-                                    format!("{}", last_variant_distance).as_str(),
-                                    variant.span(),
-                                )),
-                            })),
-                        });
-                        check_vec.push(quote!(
-                            const #v_ident_upper : u32 = #variant_count - ((#expr_binary) as u32) - 1;
-                        ));
-                        variant_try_from_v_vec.push(quote!(
-                            let #variant_int_value_tmp_name = #expr_binary
-                        ));
-                        // range_checker = Some(expr_binary.clone());
-                        variant_try_from_vec.push(quote!(
-                            #variant_int_value_tmp_name if #variant_int_value_tmp_name == #spe_ident::#v_ident as <#variant_equal_b_ident as Specifier>::StorageType => #spe_ident::#v_ident
-                        ));
-                        last_variant_distance += 1;
-                    }
-                    None => {
-                        // If no value before.
-                        // let x = ExprLit {
-                        //     attrs: vec![],
-                        //     lit: Lit::Int(LitInt::new(0), ..),
-                        // };
-                        let expr_lit = Expr::Lit(ExprLit {
+                if let Some(v) = last_variant_pos {
+                    // Have value before, push a Expr::Binary looks like `F + 1`.
+                    let former_value = variant_vec[v].as_ref().unwrap();
+                    let expr_binary = Expr::Binary(ExprBinary {
+                        attrs: vec![],
+                        left: Box::new(former_value.clone()),
+                        op: BinOp::Add(syn::token::Plus {
+                            spans: [variant.span()],
+                        }),
+                        right: Box::new(Expr::Lit(ExprLit {
                             attrs: vec![],
                             lit: Lit::Int(LitInt::new(
-                                format!("{}", index).as_str(),
+                                format!("{last_variant_distance}").as_str(),
                                 variant.span(),
                             )),
-                        });
-                        variant_try_from_vec.push(quote!(
-                            let #variant_int_value_tmp_name = #expr_lit;
-                        ));
-                        variant_try_from_vec.push(quote!(
-                            #variant_int_value_tmp_name if #variant_int_value_tmp_name == #spe_ident::#v_ident as <#variant_equal_b_ident as Specifier>::StorageType() => #spe_ident::v_ident
-                        ));
-                    }
+                        })),
+                    });
+                    check_vec.push(quote!(
+                        const #v_ident_upper : u32 = #variant_count - ((#expr_binary) as u32) - 1;
+                    ));
+                    variant_try_from_v_vec.push(quote!(
+                        let #variant_int_value_tmp_name = #expr_binary
+                    ));
+                    // range_checker = Some(expr_binary.clone());
+                    variant_try_from_vec.push(quote!(
+                        #variant_int_value_tmp_name if #variant_int_value_tmp_name == #spe_ident::#v_ident as <#variant_equal_b_ident as Specifier>::StorageType => #spe_ident::#v_ident
+                    ));
+                    last_variant_distance += 1;
+                } else {
+                    // If no value before.
+                    // let x = ExprLit {
+                    //     attrs: vec![],
+                    //     lit: Lit::Int(LitInt::new(0), ..),
+                    // };
+                    let expr_lit = Expr::Lit(ExprLit {
+                        attrs: vec![],
+                        lit: Lit::Int(LitInt::new(format!("{index}").as_str(), variant.span())),
+                    });
+                    variant_try_from_vec.push(quote!(
+                        let #variant_int_value_tmp_name = #expr_lit;
+                    ));
+                    variant_try_from_vec.push(quote!(
+                        #variant_int_value_tmp_name if #variant_int_value_tmp_name == #spe_ident::#v_ident as <#variant_equal_b_ident as Specifier>::StorageType() => #spe_ident::v_ident
+                    ));
                 }
             }
         };
@@ -528,7 +488,7 @@ pub fn bitfield_specifier(input: TokenStream) -> TokenStream {
     expand.into()
 }
 
-fn calculate_2_power(value: usize) -> Option<u32> {
+const fn calculate_2_power(value: usize) -> Option<u32> {
     if value == 0 || (value & (value - 1)) != 0 {
         return None;
     }
@@ -541,17 +501,15 @@ fn calculate_2_power(value: usize) -> Option<u32> {
     Some(times)
 }
 
-fn to_snake_case(s: String) -> String {
+fn to_snake_case(s: &str) -> String {
     let mut ret = String::new();
     for (index, ch) in s.chars().enumerate() {
         if ch.is_uppercase() {
             let chl = ch.to_lowercase().collect::<Vec<_>>()[0];
-            if index == 0 {
-                ret.push(chl);
-            } else {
+            if index != 0 {
                 ret.push('_');
-                ret.push(chl);
             }
+            ret.push(chl);
         } else {
             ret.push(ch);
         }
