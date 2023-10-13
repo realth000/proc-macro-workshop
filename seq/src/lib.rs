@@ -1,15 +1,12 @@
 use proc_macro::TokenStream;
 use std::error::Error;
 
-use proc_macro2::{Ident, Literal, Span};
-use quote::{quote, ToTokens, TokenStreamExt};
-use regex::Regex;
+use proc_macro2::{Group, Ident, Literal, Span};
+use quote::{quote, TokenStreamExt};
 use syn::parse::{Parse, ParseStream};
-use syn::{parse_macro_input, ExprBlock, LitInt, Token};
+use syn::{parse_macro_input, LitInt, Token};
 
 use derive_debug::CustomDebug;
-
-static SEQ_MARK_TEXT: &str = "___SEQ_NEED_EXPAND";
 
 macro_rules! compile_error {
     ($span: expr, $($arg: tt)*) => {
@@ -19,6 +16,8 @@ macro_rules! compile_error {
     };
 }
 
+// Use proc_macro2::Group for parsing
+// https://docs.rs/syn/latest/syn/parse/trait.Parse.html
 #[derive(CustomDebug)]
 struct SeqContent {
     variable: Ident,
@@ -26,7 +25,7 @@ struct SeqContent {
     start: LitInt,
     range_split_mark: Token![..],
     end: LitInt,
-    content: ExprBlock,
+    content: Group,
 }
 
 impl Parse for SeqContent {
@@ -57,9 +56,7 @@ impl SeqContent {
         for i in start..end {
             // For every `TokenTree` in token_stream, check, expand and append it to the tail of output.
             // Seem clone() is required: https://stackoverflow.com/questions/73994927/
-            for stmt in self.content.clone().block.stmts {
-                ret.extend(replace_ident(&self.variable, i, &stmt.to_token_stream()));
-            }
+            ret.extend(replace_ident(&self.variable, i, &self.content.stream()));
         }
         Ok(ret)
     }
@@ -88,21 +85,15 @@ pub fn seq(input: TokenStream) -> TokenStream {
     // Here should use ${prefix} to represent captured text called "prefix".
     // And in format! macro, should use "{{" to represent "{".
     // TODO: Handle general variable, not specified `N`.
-    let re = Regex::new(format!("(?P<prefix>\\w+) ~ {}", "N").as_str()).unwrap();
-    let mark_text = format!("${{prefix}}{}{}", SEQ_MARK_TEXT, "N");
-    let tmp_str = input.to_string();
-    let result1 = re.replace_all(tmp_str.as_str(), mark_text);
-    let result2 = result1.clone().to_string();
-    let result3 = result2.as_str();
-    let input2: TokenStream = result3.parse().unwrap();
-    let seq_content = parse_macro_input!(input2 as SeqContent);
+    let seq_content = parse_macro_input!(input as SeqContent);
     // panic!("{:#?}", seq_content);
 
     let d = match seq_content.apply_seq() {
         Ok(v) => v,
         Err(e) => return compile_error!(seq_content.span(), "{}", e),
     };
-    quote!(#d).into()
+    let expand = quote!(#d);
+    expand.into()
 }
 
 // Check token_stream, apply every variable to real value.
@@ -116,7 +107,7 @@ fn replace_ident(
     for tt in token_stream.clone() {
         match &tt {
             proc_macro2::TokenTree::Group(group) => {
-                let mut g = proc_macro2::Group::new(
+                let mut g = Group::new(
                     group.delimiter(),
                     replace_ident(variable, value, &group.stream()),
                 );
@@ -126,22 +117,24 @@ fn replace_ident(
             }
             // Optimize, using match guard.
             proc_macro2::TokenTree::Ident(ident) if *ident == *variable => {
-                ret.append(target_literal.clone());
+                let mut i = target_literal.clone();
+                i.set_span(ident.span());
+                ret.append(i);
             }
-            // Handle f~N
-            proc_macro2::TokenTree::Ident(ident)
-                if ident
-                    .to_string()
-                    .ends_with(format!("{SEQ_MARK_TEXT}{variable}").as_str()) =>
-            {
-                let old_ident = ident.to_string();
-                let new_ident = old_ident.replace(
-                    format!("{SEQ_MARK_TEXT}{variable}").as_str(),
-                    format!("{value}").as_str(),
-                );
-                let target_literal = Ident::new(new_ident.as_str(), ident.span());
-                ret.append(target_literal.clone());
-            }
+            // // Handle f~N
+            // proc_macro2::TokenTree::Ident(ident)
+            //     if ident
+            //         .to_string()
+            //         .ends_with(format!("{SEQ_MARK_TEXT}{variable}").as_str()) =>
+            // {
+            //     let old_ident = ident.to_string();
+            //     let new_ident = old_ident.replace(
+            //         format!("{SEQ_MARK_TEXT}{variable}").as_str(),
+            //         format!("{value}").as_str(),
+            //     );
+            //     let target_literal = Ident::new(new_ident.as_str(), ident.span());
+            //     ret.append(target_literal);
+            // }
             _ => ret.append(tt),
         }
     }
