@@ -1,7 +1,8 @@
 use proc_macro::TokenStream;
 use std::error::Error;
 
-use proc_macro2::{Group, Ident, Literal, Span};
+use proc_macro2::{Group, Ident, Literal, Punct, Span};
+use quote::__private::ext::RepToTokensExt;
 use quote::{quote, TokenStreamExt};
 use syn::parse::{Parse, ParseStream};
 use syn::{parse_macro_input, LitInt, Token};
@@ -86,7 +87,7 @@ pub fn seq(input: TokenStream) -> TokenStream {
     // And in format! macro, should use "{{" to represent "{".
     // TODO: Handle general variable, not specified `N`.
     let seq_content = parse_macro_input!(input as SeqContent);
-    // panic!("{:#?}", seq_content);
+    // panic!("{seq_content:#?}");
 
     let d = match seq_content.apply_seq() {
         Ok(v) => v,
@@ -102,9 +103,17 @@ fn replace_ident(
     value: i32,
     token_stream: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
+    // Flag marks whether current is waiting for the target variable.
+    // e.g. "F ~ N": when parsing punct '~', set flag to true and expecting for the corresponding
+    // target variable N.
+    // * If the next token is ident 'N', replace the full name and save in token stream.
+    // * Otherwise push the original tokens in token stream.
+    let mut waiting_list: Vec<proc_macro2::TokenStream> = vec![];
+    let mut waiting_target = false;
     let target_literal = Literal::i32_unsuffixed(value);
     let mut ret = proc_macro2::TokenStream::new();
-    for tt in token_stream.clone() {
+    let full_box: Vec<_> = token_stream.clone().into_iter().collect();
+    for (index, tt) in token_stream.clone().into_iter().enumerate() {
         match &tt {
             proc_macro2::TokenTree::Group(group) => {
                 let mut g = Group::new(
@@ -121,6 +130,28 @@ fn replace_ident(
                 i.set_span(ident.span());
                 ret.append(i);
             }
+            proc_macro2::TokenTree::Ident(ident) => {
+                if let Some(proc_macro2::TokenTree::Punct(next_punct)) = full_box.get(index + 1) {
+                    if next_punct.to_string() != "~" {
+                        ret.append(ident.clone());
+                        continue;
+                    }
+                    if let Some(proc_macro2::TokenTree::Ident(next_ident)) = full_box.get(index + 2)
+                    {
+                        if *next_ident != *variable {
+                            ret.append(ident.clone());
+                            continue;
+                        }
+                        // Catch "F ~ N"
+                        panic!(">>> {ident:#?}{value:#?}");
+                        ret.append(Ident::new(
+                            format!("{ident}{value}").as_str(),
+                            next_ident.span(),
+                        ));
+                    }
+                }
+            }
+            proc_macro2::TokenTree::Punct(punct) if punct.to_string() == "~" => {}
             // // Handle f~N
             // proc_macro2::TokenTree::Ident(ident)
             //     if ident
