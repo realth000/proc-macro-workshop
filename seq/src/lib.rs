@@ -31,7 +31,7 @@ struct SeqContent {
 
 impl Parse for SeqContent {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        Ok(SeqContent {
+        Ok(Self {
             variable: input.parse()?,
             in_mark: input.parse()?,
             start: input.parse()?,
@@ -69,6 +69,11 @@ impl SeqContent {
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc
+)]
 #[proc_macro]
 pub fn seq(input: TokenStream) -> TokenStream {
     // When parsing ParseStream, compiler expects no syntax error because otherwise it can not
@@ -127,12 +132,12 @@ fn replace_ident(
             proc_macro2::TokenTree::Ident(ident)
                 if ident
                     .to_string()
-                    .ends_with(format!("{}{}", SEQ_MARK_TEXT, variable).as_str()) =>
+                    .ends_with(format!("{SEQ_MARK_TEXT}{variable}").as_str()) =>
             {
                 let old_ident = ident.to_string();
                 let new_ident = old_ident.replace(
-                    format!("{}{}", SEQ_MARK_TEXT, variable).as_str(),
-                    format!("{}", value).as_str(),
+                    format!("{SEQ_MARK_TEXT}{variable}").as_str(),
+                    format!("{value}").as_str(),
                 );
                 let target_literal = Ident::new(new_ident.as_str(), ident.span());
                 ret.append(target_literal.clone());

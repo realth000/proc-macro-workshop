@@ -14,14 +14,17 @@ macro_rules! compile_error {
     };
 }
 
+#[allow(
+    clippy::too_many_lines,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc
+)]
 #[proc_macro_attribute]
 pub fn sorted(args: TokenStream, input: TokenStream) -> TokenStream {
     let _ = args;
     let input2 = input.clone();
     let item = parse_macro_input!(input2 as Item);
-    let item_enum = if let Item::Enum(item_enum) = item {
-        item_enum
-    } else {
+    let Item::Enum(item_enum) = item else {
         return compile_error!(
             proc_macro2::Span::call_site(),
             "expected enum or match expression"
@@ -42,11 +45,8 @@ pub fn sorted(args: TokenStream, input: TokenStream) -> TokenStream {
         .find(|(orig, sorted)| orig != sorted)
     {
         ret.extend(
-            syn::Error::new(
-                sorted.span(),
-                format!("{} should sort before {}", sorted, orig),
-            )
-            .to_compile_error(),
+            syn::Error::new(sorted.span(), format!("{sorted} should sort before {orig}"))
+                .to_compile_error(),
         );
     }
     ret.into()
@@ -55,7 +55,7 @@ pub fn sorted(args: TokenStream, input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn check(args: TokenStream, input: TokenStream) -> TokenStream {
     let _ = args;
-    let input_clone = input.clone();
+    let input_clone = input;
     let mut ast = parse_macro_input!(input_clone as ItemFn);
     // panic!("{:#?}", ast);
 
@@ -86,13 +86,10 @@ pub fn check(args: TokenStream, input: TokenStream) -> TokenStream {
         }
         None => {}
     }
-    match &tm.not_support {
-        Some(arm) => {
-            ret.extend(
-                syn::Error::new_spanned(&arm.pat, "unsupported by #[sorted]").to_compile_error(),
-            );
-        }
-        None => {}
+    if let Some(arm) = &tm.not_support {
+        ret.extend(
+            syn::Error::new_spanned(&arm.pat, "unsupported by #[sorted]").to_compile_error(),
+        );
     }
     ret.into()
 }
@@ -155,7 +152,7 @@ impl VisitMut for TraceMatch {
                 .find(|(orig, sorted)| orig != sorted)
             {
                 Some((orig, sorted)) => {
-                    self.not_sorted = Some(((**orig).clone(), (**sorted).clone()))
+                    self.not_sorted = Some(((**orig).clone(), (**sorted).clone()));
                 }
                 None => visit_expr_match_mut(self, i),
             }
@@ -168,11 +165,10 @@ impl VisitMut for TraceMatch {
 // Error::IO(e) => "Error::IO"
 fn pat_to_string(pat: &Pat) -> String {
     let orig_str = pat.to_token_stream().to_string();
-    match orig_str.find('(') {
-        Some(u) => &orig_str[..u],
-        None => &orig_str,
-    }
-    .replace(' ', "")
+    orig_str
+        .find('(')
+        .map_or_else(|| orig_str.as_str(), |u| &orig_str[..u])
+        .replace(' ', "")
 }
 
 // Combine `Path` and `Pat` together so that we can use them generate compile error

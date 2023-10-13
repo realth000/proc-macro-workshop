@@ -27,6 +27,11 @@ macro_rules! compile_span_error {
     };
 }
 
+#[allow(
+    clippy::too_many_lines,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc
+)]
 #[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
@@ -41,51 +46,44 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let mut field_method_vec: Vec<proc_macro2::TokenStream> = vec![];
     let mut field_build_vec: Vec<proc_macro2::TokenStream> = vec![];
 
-    let data_struct = if let Data::Struct(data_struct) = &ast.data {
-        data_struct
-    } else {
+    let Data::Struct(data_struct) = &ast.data else {
         return compile_error!(ident.span(), "invalid derive type: not a struct");
     };
 
-    let named_fields = if let Fields::Named(named_fields) = &data_struct.fields {
-        named_fields
-    } else {
+    let Fields::Named(named_fields) = &data_struct.fields else {
         return compile_error!(ident.span(), "expected named fields");
     };
 
-    for named_field in named_fields.named.iter() {
+    for named_field in &named_fields.named {
         let mut each: Option<String> = None;
         for attr in &named_field.attrs {
             let p = attr.meta.path().segments.first();
             if p.is_none() || p.unwrap().ident != "builder" {
                 continue;
             }
-            let meta = if let Meta::List(meta) = &attr.meta {
-                meta
-            } else {
+            let Meta::List(meta) = &attr.meta else {
                 continue;
             };
 
-            for x in meta.tokens.clone().into_iter() {
+            for x in meta.tokens.clone() {
                 match x {
                     proc_macro2::TokenTree::Ident(i) => {
-                        if i != "each" {
-                            // Here we can use format! to show custom message but in
-                            // test 08 it requires a const one.
-                            // format!("unknown attribute {}", i)
-                            //
-                            // Test 08 requires the error message to mark all tokens
-                            // inside the unrecognized attribute, thus use new_spanned()
-                            // instead of new(), the latter one only mark the current
-                            // span.
-                            //
-                            return compile_span_error!(
-                                &attr.meta,
-                                "expected `builder(each = \"...\")`".to_string()
-                            );
-                        } else {
+                        if i == "each" {
                             continue;
                         }
+                        // Here we can use format! to show custom message but in
+                        // test 08 it requires a const one.
+                        // format!("unknown attribute {}", i)
+                        //
+                        // Test 08 requires the error message to mark all tokens
+                        // inside the unrecognized attribute, thus use new_spanned()
+                        // instead of new(), the latter one only mark the current
+                        // span.
+                        //
+                        return compile_span_error!(
+                            &attr.meta,
+                            "expected `builder(each = \"...\")`".to_string()
+                        );
                     }
                     proc_macro2::TokenTree::Literal(l) => {
                         each = Some(String::from(l.to_string().trim_matches('"')));
@@ -99,10 +97,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
         let i = &named_field.ident;
         let t = &named_field.ty;
-        let path = match t {
-            Type::Path(path) => path,
-            _ => continue,
-        };
+        let Type::Path(path) = t else { continue };
 
         let segments = &path.path.segments;
         if !segments.is_empty() && segments[0].ident.to_string().as_str() == "Option" {
@@ -144,50 +139,49 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 #i: self.#i.clone().unwrap_or_default()
             ));
 
-            let method = match each {
-                Some(v) => {
-                    if segments.is_empty() || segments[0].ident != "Vec" {
+            let method = if let Some(v) = each {
+                if segments.is_empty() || segments[0].ident != "Vec" {
+                    return compile_span_error!(
+                        &segments[0],
+                        "`each=()` used on a not vector field".to_string()
+                    );
+                }
+                match segments[0]
+                    .arguments
+                    .to_token_stream()
+                    .to_string()
+                    .split(' ')
+                    .find(|e| !OPTION_MODIFIER.contains(e))
+                {
+                    Some(vv) => {
+                        let each_ident = Ident::new(v.as_str(), ident.span());
+                        let vec_type_ident = Ident::new(vv, ident.span());
+                        quote!(
+                            pub fn #each_ident(&mut self, #each_ident: #vec_type_ident) -> &mut Self {
+                                if self.#i.is_none() {
+                                    self.#i = Some(Vec::new())
+                                }
+                                if let Some(ref mut v) =  self.#i {
+                                    v.push(#each_ident);
+                                }
+                                self
+                            }
+                        )
+                    }
+                    None => {
                         return compile_span_error!(
                             &segments[0],
-                            "`each=()` used on a not vector field".to_string()
+                            "can not find what T when parsing as Vec<T>"
                         );
                     }
-                    match segments[0]
-                        .arguments
-                        .to_token_stream()
-                        .to_string()
-                        .split(' ')
-                        .find(|e| !OPTION_MODIFIER.contains(e))
-                    {
-                        Some(vv) => {
-                            let each_ident = Ident::new(v.as_str(), ident.span());
-                            let vec_type_ident = Ident::new(vv, ident.span());
-                            quote!(
-                                pub fn #each_ident(&mut self, #each_ident: #vec_type_ident) -> &mut Self {
-                                    if self.#i.is_none() {
-                                        self.#i = Some(Vec::new())
-                                    }
-                                    if let Some(ref mut v) =  self.#i {
-                                        v.push(#each_ident);
-                                    }
-                                    self
-                                }
-                            )
-                        }
-                        None => {
-                            return compile_span_error!(
-                                &segments[0],
-                                "can not find what T when parsing as Vec<T>"
-                            );
-                        }
-                    }
                 }
-                None => quote!(
+            } else {
+                quote!(
                     pub fn #i(&mut self, #i: #t) -> &mut Self {
                         self.#i = Some(#i);
                         self
                     }
-                ),
+                )
             };
 
             field_method_vec.push(method);

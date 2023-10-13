@@ -1,9 +1,10 @@
 use proc_macro::TokenStream;
-use std::collections::HashMap;
-
 use proc_macro2::{Ident, Span};
 use quote::quote;
+use std::clone::Clone;
+use std::collections::HashMap;
 use syn::punctuated::Punctuated;
+use syn::token::{Colon, Where};
 use syn::{
     parse_macro_input, parse_quote, Data, DeriveInput, Expr, ExprLit, Fields, GenericArgument,
     GenericParam, Generics, Lit, Meta, MetaNameValue, Path, PathArguments, PathSegment,
@@ -27,6 +28,12 @@ macro_rules! ident_token_str {
     };
 }
 
+#[allow(
+    clippy::too_many_lines,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::cognitive_complexity
+)]
 #[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast = parse_macro_input!(input as DeriveInput);
@@ -44,14 +51,10 @@ pub fn derive(input: TokenStream) -> TokenStream {
     // If false, Ident not exists in `PhantomData` or both in/out `PhantomData`.
     let mut phantom_generic_map: HashMap<Ident, (bool, Option<Type>)> = HashMap::new();
 
-    let data_struct = if let Data::Struct(data_struct) = &ast.data {
-        data_struct
-    } else {
+    let Data::Struct(data_struct) = &ast.data else {
         return compile_error!(ident.span(), "invalid struct type");
     };
-    let named_fields = if let Fields::Named(named_fields) = &data_struct.fields {
-        named_fields
-    } else {
+    let Fields::Named(named_fields) = &data_struct.fields else {
         return TokenStream::new();
     };
 
@@ -100,18 +103,18 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let (impl_generics, ty_generics, where_clause) = &ast.generics.split_for_impl();
     // panic!("impl_generics: {:#?}", impl_generics);
-    let mut where_clause_ex = match where_clause {
-        Some(v) => WhereClause {
+    let mut where_clause_ex = where_clause.as_ref().map_or_else(
+        || WhereClause {
+            where_token: Where::default(),
+            predicates: Punctuated::default(),
+        },
+        |v| WhereClause {
             where_token: v.where_token,
             predicates: v.predicates.clone(),
         },
-        None => WhereClause {
-            where_token: Default::default(),
-            predicates: Default::default(),
-        },
-    };
+    );
 
-    for named_field in named_fields.named.iter() {
+    for named_field in &named_fields.named {
         let mut debug_attr_format: Option<String> = None;
         for attr in &named_field.attrs {
             let p = attr.meta.path().segments.first();
@@ -212,20 +215,20 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
         // panic!("where: {:#?}", where_clause_ex.predicates);
 
-        let field_print = match debug_attr_format {
-            Some(v) => {
+        let field_print = debug_attr_format.map_or_else(
+            || {
+                quote!(
+                    .field(#s, &self.#i)
+                )
+            },
+            |v| {
                 // Here use ident_token_str! macro rules to make an literal ident.
                 let format_token = ident_token_str!(v);
                 quote!(
                     .field(#s, &format_args!(#format_token, &self.#i))
                 )
-            }
-            None => {
-                quote!(
-                    .field(#s, &self.#i)
-                )
-            }
-        };
+            },
+        );
 
         field_vec.push(field_print);
     }
@@ -239,15 +242,10 @@ pub fn derive(input: TokenStream) -> TokenStream {
             .predicates
             .push(WherePredicate::Type(PredicateType {
                 lifetimes: None,
-                bounded_ty: match ident_vec {
-                    // 04, 06
-                    Some(v) => v.clone(),
-                    // 07
-                    None => {
-                        parse_quote!(#generic_ident)
-                    }
-                },
-                colon_token: Default::default(),
+                bounded_ty: ident_vec
+                    .as_ref()
+                    .map_or_else(|| parse_quote!(#generic_ident), Clone::clone),
+                colon_token: Colon::default(),
                 bounds: parse_quote!(std::fmt::Debug),
             }));
     }
@@ -262,8 +260,12 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
     );
 
-    let expanded: TokenStream = match outer_bound {
-        Some(bound) => {
+    let expanded: TokenStream = outer_bound.map_or_else(|| quote!(
+            impl #impl_generics std::fmt::Debug for #ident #ty_generics #where_clause_ex {
+                #body
+            }
+        )
+        .into(), |bound| {
             let outer_bound_where_clause = str_to_where_clause(bound.as_str(), ident.span());
             quote!(
                 impl #impl_generics std::fmt::Debug for #ident #ty_generics #outer_bound_where_clause {
@@ -271,14 +273,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 }
             )
                 .into()
-        }
-        None => quote!(
-            impl #impl_generics std::fmt::Debug for #ident #ty_generics #where_clause_ex {
-                #body
-            }
-        )
-        .into(),
-    };
+        });
 
     expanded
 }
@@ -300,7 +295,7 @@ fn trait_bound_token(token: &proc_macro2::TokenStream) -> Option<String> {
     if token.is_empty() {
         return None;
     }
-    for tt in token.clone().into_iter() {
+    for tt in token.clone() {
         match tt {
             proc_macro2::TokenTree::Ident(i) => {
                 if i != "bound" {
@@ -315,16 +310,15 @@ fn trait_bound_token(token: &proc_macro2::TokenStream) -> Option<String> {
             proc_macro2::TokenTree::Literal(l) => {
                 return Some(String::from(l.to_string().trim_matches('"')));
             }
-            _ => continue,
+            proc_macro2::TokenTree::Group(_) => continue,
         }
     }
     None
 }
 
 fn str_to_where_clause(str: &str, span: Span) -> Option<WhereClause> {
-    let pos = match str.rfind(':') {
-        Some(pos) => pos,
-        None => return None,
+    let Some(pos) = str.rfind(':') else {
+        return None;
     };
 
     let s1 = str[..pos].to_string();
@@ -334,8 +328,8 @@ fn str_to_where_clause(str: &str, span: Span) -> Option<WhereClause> {
     let bound = s2.trim();
 
     let mut wc = WhereClause {
-        where_token: Default::default(),
-        predicates: Default::default(),
+        where_token: Where::default(),
+        predicates: Punctuated::default(),
     };
 
     // let mut path_segment_punctuated: Punctuated<PathSegment, Token![::]> = Punctuated::new();
@@ -367,7 +361,7 @@ fn str_to_where_clause(str: &str, span: Span) -> Option<WhereClause> {
                 segments: build_path_segment_punctuated(ident, span),
             },
         }),
-        colon_token: Default::default(),
+        colon_token: Colon::default(),
         bounds: bounds_punctuated,
     }));
 
@@ -379,8 +373,8 @@ fn build_path_segment_punctuated(s: &str, span: Span) -> Punctuated<PathSegment,
     for part in s.split("::") {
         path_segment_punctuated.push(PathSegment {
             ident: Ident::new(part, span),
-            arguments: Default::default(),
+            arguments: PathArguments::default(),
         });
     }
-    return path_segment_punctuated;
+    path_segment_punctuated
 }

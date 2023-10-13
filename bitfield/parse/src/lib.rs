@@ -8,6 +8,11 @@ pub trait BitParse {
 
     fn get_mut_data(&mut self) -> &mut Self::Data;
 
+    #[allow(
+        clippy::missing_errors_doc,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation
+    )]
     // length is how may bits to set.
     fn set_bits_value(
         &mut self,
@@ -26,8 +31,7 @@ pub trait BitParse {
         // left side is in bytes, right side offset and length is in bits.
         if allowed_length < value_length {
             return Err(Box::<dyn std::error::Error>::from(format!(
-                "overflow when setting value: value length is {}bits but only {} bits allowed",
-                value_length, allowed_length
+                "overflow when setting value: value length is {value_length} bits but only {allowed_length} bits allowed",
             )));
         }
 
@@ -100,6 +104,12 @@ pub trait BitParse {
         Ok(())
     }
 
+    #[allow(
+        clippy::missing_errors_doc,
+        clippy::cast_lossless,
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation
+    )]
     fn get_bits_value(&self, offset_bits: usize, length_bits: usize) -> u64 {
         let data = self.get_data().as_ref();
         let mut ret: u64 = 0;
@@ -107,8 +117,6 @@ pub trait BitParse {
 
         let mut outer = offset_bits / 8;
         let mut inner = offset_bits % 8;
-
-        let mut check = vec![];
 
         loop {
             if length + inner <= 8 {
@@ -120,7 +128,6 @@ pub trait BitParse {
                 };
                 // All value is stored in current bit;
                 ret |= ((data[outer] & !bit_mask) as u64) >> (!bit_mask).trailing_zeros();
-                check.push(ret.clone());
                 // panic!(
                 //     "result!!! {}, {} {}",
                 //     !bit_mask,
@@ -132,7 +139,6 @@ pub trait BitParse {
                 let bit_mask = (0x00FF << (8 - inner)) as u8;
 
                 ret |= ((data[outer] & !bit_mask) as u64) << (length - (8 - inner));
-                check.push(ret.clone());
 
                 // The following code: `length -= 8 - inner;`
                 // equals to ` length = length - (8 - inner)`.
