@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use std::error::Error;
 
-use proc_macro2::{Group, Ident, Literal, Span};
+use proc_macro2::{Delimiter, Group, Ident, Literal, Span};
 use quote::{quote, TokenStreamExt};
 use syn::parse::{Parse, ParseStream};
 use syn::{parse_macro_input, LitInt, Token};
@@ -51,13 +51,25 @@ impl SeqContent {
         let start = self.start.token().to_string().parse::<i32>()?;
         let end = self.end.token().to_string().parse::<i32>()?;
 
-        let mut ret = proc_macro2::TokenStream::new();
-        // Repeat expanding code (end-start) times, apply variable to i in every expand.
-        for i in start..end {
-            // For every `TokenTree` in token_stream, check, expand and append it to the tail of output.
-            // Seem clone() is required: https://stackoverflow.com/questions/73994927/
-            ret.extend(replace_ident(&self.variable, i, &self.content.stream()));
-        }
+        // First try to match partial repeat `#()*` in test 05.
+        // If found, use that result.
+        // If not found, treat the entire code as "need to repeat" as in test 01-04.
+        //
+        // Note that here we do not allow nested `#()*` or both repeating whole code and partial code.
+        let ret = partial_match(&self.variable, start, end, self.content.stream()).map_or_else(
+            || {
+                // Here is just what we did in test 01-04, whole code need to repeat.
+                let mut r = proc_macro2::TokenStream::new();
+                for i in start..end {
+                    // For every `TokenTree` in token_stream, check, expand and append it to the tail of output.
+                    // Seem clone() is required: https://stackoverflow.com/questions/73994927/
+                    r.extend(replace_ident(&self.variable, i, &self.content.stream()));
+                }
+                r
+            },
+            |partial_matched| partial_matched,
+        );
+
         Ok(ret)
     }
 
@@ -73,7 +85,6 @@ impl SeqContent {
 )]
 #[proc_macro]
 pub fn seq(input: TokenStream) -> TokenStream {
-    // panic!("{input:#?}");
     // When parsing ParseStream, compiler expects no syntax error because otherwise it can not
     // understand what kinds of tokens are in the ParseStream .
     //
@@ -168,4 +179,85 @@ fn replace_ident(
         }
     }
     ret
+}
+
+/// Check for situations in test 05, try to match `#()*` in `token_stream`, the code inside it need repeat.
+///
+/// If found, return `Some` contains the handled token stream.
+/// If not found, return None.
+fn partial_match(
+    variable: &Ident,
+    start: i32,
+    end: i32,
+    token_stream: proc_macro2::TokenStream,
+) -> Option<proc_macro2::TokenStream> {
+    // Flag indicating whether `#()*` found in token stream.
+    let mut matched = false;
+
+    let mut ret = proc_macro2::TokenStream::new();
+    let full_box: Vec<_> = token_stream.clone().into_iter().collect();
+
+    // Iterator used for checking `#()*` block, only repeat code inside this block.
+    let mut it = token_stream.into_iter().enumerate();
+
+    while let Some((index, tt)) = it.next() {
+        match &tt {
+            // If found a group, recursively check it.
+            proc_macro2::TokenTree::Group(group) => {
+                let sub_matched = partial_match(variable, start, end, group.stream());
+                let mut g = sub_matched.map_or_else(
+                    || Group::new(group.delimiter(), group.stream()),
+                    |matched_group| {
+                        // `#()*` found in sub group, set matched to true.
+                        matched = true;
+                        Group::new(group.delimiter(), matched_group)
+                    },
+                );
+                g.set_span(group.span());
+                ret.append(g);
+            }
+            proc_macro2::TokenTree::Punct(head_punct) if head_punct.as_char() == '#' => {
+                if let Some(proc_macro2::TokenTree::Group(group)) = full_box.get(index + 1) {
+                    if group.delimiter() != Delimiter::Parenthesis {
+                        ret.append(tt);
+                        continue;
+                    }
+                    if let Some(proc_macro2::TokenTree::Punct(tail_punct)) = full_box.get(index + 2)
+                    {
+                        if tail_punct.to_string() != "*" {
+                            ret.append(tt);
+                            continue;
+                        }
+                        // Here we matched `#()*`.
+                        matched = true;
+                        // Matched "#( {code} )*"
+                        // Repeat expanding code (end-start) times, apply variable to i in every expand.
+                        for i in start..end {
+                            // For every `TokenTree` in token_stream, check, expand and append it to the tail of output.
+                            // Seem clone() is required: https://stackoverflow.com/questions/73994927/
+                            ret.extend(replace_ident(
+                                variable,
+                                i,
+                                // &self.content.stream(),
+                                &group.stream(),
+                            ));
+                        }
+
+                        it.nth(1);
+                        continue;
+                    }
+                }
+
+                // Fallback.
+                ret.append(tt);
+            }
+            _ => ret.append(tt),
+        }
+    }
+
+    if matched {
+        Some(ret)
+    } else {
+        None
+    }
 }
