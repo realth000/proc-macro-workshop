@@ -1,8 +1,7 @@
 use proc_macro::TokenStream;
 use std::error::Error;
 
-use proc_macro2::{Group, Ident, Literal, Punct, Span};
-use quote::__private::ext::RepToTokensExt;
+use proc_macro2::{Group, Ident, Literal, Span};
 use quote::{quote, TokenStreamExt};
 use syn::parse::{Parse, ParseStream};
 use syn::{parse_macro_input, LitInt, Token};
@@ -74,6 +73,7 @@ impl SeqContent {
 )]
 #[proc_macro]
 pub fn seq(input: TokenStream) -> TokenStream {
+    // panic!("{input:#?}");
     // When parsing ParseStream, compiler expects no syntax error because otherwise it can not
     // understand what kinds of tokens are in the ParseStream .
     //
@@ -108,13 +108,16 @@ fn replace_ident(
     // target variable N.
     // * If the next token is ident 'N', replace the full name and save in token stream.
     // * Otherwise push the original tokens in token stream.
-    let mut waiting_list: Vec<proc_macro2::TokenStream> = vec![];
-    let mut waiting_target = false;
     let target_literal = Literal::i32_unsuffixed(value);
     let mut ret = proc_macro2::TokenStream::new();
     let full_box: Vec<_> = token_stream.clone().into_iter().collect();
-    for (index, tt) in token_stream.clone().into_iter().enumerate() {
+    let mut it = token_stream.clone().into_iter().enumerate();
+
+    while let Some((index, tt)) = it.next() {
         match &tt {
+            // When meeting a group, need to analyze the code inside it.
+            // e.g.
+            // In `fn foo() -> u64 { 0 }`, the `{ 0 }` is a block token tree.
             proc_macro2::TokenTree::Group(group) => {
                 let mut g = Group::new(
                     group.delimiter(),
@@ -131,6 +134,9 @@ fn replace_ident(
                 ret.append(i);
             }
             proc_macro2::TokenTree::Ident(ident) => {
+                // Check if we have the "F" "~" "N" structure.
+                // If we have, convert "F" "~" "N" to "F1", "F2"... and continue.
+                // If not, just copy the token into `ret` stream.
                 if let Some(proc_macro2::TokenTree::Punct(next_punct)) = full_box.get(index + 1) {
                     if next_punct.to_string() != "~" {
                         ret.append(ident.clone());
@@ -143,29 +149,21 @@ fn replace_ident(
                             continue;
                         }
                         // Catch "F ~ N"
-                        panic!(">>> {ident:#?}{value:#?}");
-                        ret.append(Ident::new(
-                            format!("{ident}{value}").as_str(),
-                            next_ident.span(),
-                        ));
+                        // It seems both `ident.span()` and `next_ident.span()` here work, do not matter.
+                        ret.append(Ident::new(format!("{ident}{value}").as_str(), ident.span()));
+                        // Skip the iterator to the correct position.
+                        // Here we have a "F" "~" "N", and `it` is on "F", call `it.nth(1)` will
+                        // move `it` to `N`, and in next loop round, `it` will be in the correct
+                        // position where is the next token after "N".
+                        it.nth(1);
+                        continue;
                     }
                 }
+                // Fallback, if the ident here not followed by "~" and "N", just append it to the stream.
+                ret.append(ident.clone());
+                continue;
             }
             proc_macro2::TokenTree::Punct(punct) if punct.to_string() == "~" => {}
-            // // Handle f~N
-            // proc_macro2::TokenTree::Ident(ident)
-            //     if ident
-            //         .to_string()
-            //         .ends_with(format!("{SEQ_MARK_TEXT}{variable}").as_str()) =>
-            // {
-            //     let old_ident = ident.to_string();
-            //     let new_ident = old_ident.replace(
-            //         format!("{SEQ_MARK_TEXT}{variable}").as_str(),
-            //         format!("{value}").as_str(),
-            //     );
-            //     let target_literal = Ident::new(new_ident.as_str(), ident.span());
-            //     ret.append(target_literal);
-            // }
             _ => ret.append(tt),
         }
     }
