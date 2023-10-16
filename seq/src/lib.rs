@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use std::error::Error;
 
-use proc_macro2::{Delimiter, Group, Ident, Literal, Span};
+use proc_macro2::{Delimiter, Group, Ident, Literal, Punct, Span};
 use quote::{quote, TokenStreamExt};
 use syn::parse::{Parse, ParseStream};
 use syn::{parse_macro_input, LitInt, Token};
@@ -25,6 +25,7 @@ struct SeqContent {
     start: LitInt,
     range_split_mark: Token![..],
     end: LitInt,
+    upper_equal: Option<Punct>,
     content: Group,
 }
 
@@ -35,6 +36,7 @@ impl Parse for SeqContent {
             in_mark: input.parse()?,
             start: input.parse()?,
             range_split_mark: input.parse()?,
+            upper_equal: input.parse()?,
             end: input.parse()?,
             content: input.parse()?,
         })
@@ -49,7 +51,14 @@ impl SeqContent {
 
     fn apply_loop(&self) -> Result<proc_macro2::TokenStream, Box<dyn Error>> {
         let start = self.start.token().to_string().parse::<i32>()?;
-        let end = self.end.token().to_string().parse::<i32>()?;
+        // upper_equal is the upper equal bound in "1..=20";
+        let end = if self.upper_equal.is_some() {
+            // "1..=20"
+            self.end.token().to_string().parse::<i32>()? + 1
+        } else {
+            // "1..20"
+            self.end.token().to_string().parse::<i32>()?
+        };
 
         // First try to match partial repeat `#()*` in test 05.
         // If found, use that result.
